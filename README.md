@@ -16,8 +16,8 @@ no native parsers, nothing is rendered or executed.
 | Format | Checks |
 |---|---|
 | All | real type by magic bytes (Marcel) must be allowlisted; file extension must agree with content; size limit |
-| PDF (and PDF-based `.ai`) | rejects `/JavaScript /JS /Launch /EmbeddedFile(s) /RichMedia /XFA /SubmitForm /ImportData /GoToR /GoToE /Rendition`, hex-escaped spellings included, also inside compressed object streams; rejects encrypted PDFs and unsupported object-stream filters |
-| docx / pptx / xlsx | every part name must match an allowlist; rejects VBA, `embeddings/`, `activeX/`, `externalLinks/`, macro sheets, macro content types, DTDs, external relationships other than http(s)/mailto hyperlinks, Word DDE/INCLUDE/IMPORT/LINK/QUOTE fields, PowerPoint program/macro actions, Excel DDE formulas, non-UTF-8 XML |
+| PDF (and PDF-based `.ai`) | rejects `/JavaScript /JS /Launch /EmbeddedFile(s) /RichMedia /XFA /SubmitForm /ImportData /GoToR /GoToE /Rendition`, hex-escaped spellings included, also inside compressed object streams (located by `/ObjStm` or `/First` and parsed with a real PDF lexer, so comments, strings and fake headers cannot hide them); rejects risky parsers (`/JBIG2Decode`, 3D/U3D/PRC, PostScript XObjects), URI links other than http(s)/mailto/relative (`file:`, UNC, `javascript:`, indirect values), encrypted PDFs and unsupported object-stream filters |
+| docx / pptx / xlsx | every part name must match an allowlist; rejects VBA, `embeddings/`, `activeX/`, `externalLinks/`, macro sheets, external data connections (`connections.xml`, `queryTables/`, Power Query), macro content types, DTDs, external relationships other than http(s)/mailto hyperlinks, relationships of macro/OLE/ActiveX/altChunk type, Word DDE/INCLUDE(TEXT/PICTURE)/IMPORT/LINK/QUOTE/DATABASE/MACROBUTTON fields, PowerPoint program/macro actions, Excel DDE formulas and defined names, non-UTF-8 XML; checks run on entity-decoded text and CDATA |
 | zip | path traversal, symlinks, encrypted entries, duplicates, entry/total size and compression-ratio limits, nested archives; every member extracted (bounded) and inspected with the same policy |
 | Others | rejected unless listed in `allow_unverifiable` (type + extension check only) |
 
@@ -39,7 +39,7 @@ result = UploadInspector.check(
 )
 
 result.safe?          # => true / false
-result.reason         # => :pdf_active_content, :type_not_allowed, ... (nil when safe)
+result.reason         # => :pdf_active_content, :pdf_unsafe_uri, :type_not_allowed, ... (nil when safe)
 result.detail         # => human-readable hint
 result.detected_type  # => "application/pdf"
 ```
@@ -86,6 +86,10 @@ docker run --rm -v "$PWD":/src:ro ruby:3.3-slim \
 ```
 
 CI runs the suite on Ruby 3.2 / 3.3 / 3.4 against rubyzip 2.3 and 3.x.
+
+`test/sample_virus_malware.rb` is the hostile-sample corpus: every attack shape with its expected
+verdict, plus known gaps (skipped until fixed). `bundle exec rake samples[DIR]` writes the inert
+samples to disk (default `tmp/samples`) to cross-check against real readers or other scanners.
 
 ### Releasing
 
