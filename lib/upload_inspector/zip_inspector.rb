@@ -48,6 +48,11 @@ module UploadInspector
       data
     end
 
+    # First bytes of a member, to tell what it really is without inflating all of it.
+    def read_head(entry, length)
+      entry.get_input_stream { |io| io.read(length) }.to_s.b
+    end
+
   private
 
     attr_reader :policy, :depth

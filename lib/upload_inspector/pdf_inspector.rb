@@ -19,7 +19,8 @@ module UploadInspector
     ACTIVE_NAMES = %w[
       JavaScript JS Launch EmbeddedFile EmbeddedFiles RichMedia XFA
       SubmitForm ImportData GoToR GoToE Rendition
-    ].freeze
+      EF FileAttachment Filespec Collection
+    ].freeze # attachments need neither /Type /EmbeddedFile nor the /EmbeddedFiles name tree, only /EF
     # Not scripts, but parsers with a long exploit history (JBIG2: FORCEDENTRY class; 3D: U3D/PRC).
     RISKY_NAMES = %w[JBIG2Decode 3D U3D PRC].freeze
     SAFE_URI_SCHEMES = %w[http https mailto].freeze

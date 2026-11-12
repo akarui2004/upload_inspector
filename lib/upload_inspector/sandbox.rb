@@ -2,6 +2,7 @@
 
 require 'io/wait'
 require 'rbconfig'
+require 'tmpdir'
 
 module UploadInspector
   # Runs the inspection in a separate Ruby process with CPU, memory and wall-clock limits.
@@ -18,15 +19,21 @@ module UploadInspector
 
     module_function
 
+    # The child's temp files (extracted zip members) live in a directory owned by the parent:
+    # a child killed on timeout or a resource limit cannot clean up after itself.
     def run(path, filename:, policy:)
+      Dir.mktmpdir('upload_inspector') { |workdir| run_child(path, filename, policy, workdir) }
+    rescue SystemCallError => e
+      Result.reject(:sandbox_failed, e.message)
+    end
+
+    def run_child(path, filename, policy, workdir)
       reader, writer = IO.pipe
       payload = JSON.generate(path: File.expand_path(path), filename: filename.to_s, policy: policy.to_h)
-      pid = Process.spawn(RbConfig.ruby, '-I', LIB_DIR, '-e', CHILD_SCRIPT, payload,
+      pid = Process.spawn({ 'TMPDIR' => workdir }, RbConfig.ruby, '-I', LIB_DIR, '-e', CHILD_SCRIPT, payload,
                           spawn_options(policy, writer))
       writer.close
       collect(pid, reader, policy.timeout)
-    rescue SystemCallError => e
-      Result.reject(:sandbox_failed, e.message)
     ensure
       writer&.close unless writer&.closed?
       reader&.close unless reader&.closed?

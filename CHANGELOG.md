@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+- Images: PNG, JPEG, GIF and WebP in `allowed_types` are now structurally verified (bounds,
+  `max_image_pixels`, no data after the end of the image) instead of `:unverifiable_type`.
+  New reasons `:image_malformed`, `:image_too_many_pixels`, `:image_trailing_data`.
+- SVG: `image/svg+xml` in `allowed_types` is verified as static (no script, event handlers,
+  foreign content, DTD entities or references outside the file). New reasons
+  `:svg_active_content`, `:svg_external_reference`, `:svg_dtd`, `:svg_unparsable`,
+  `:svg_unsupported_encoding`, `:svg_too_large`.
+- OOXML: checks no longer trust part paths. A main document stored as `media/x.png`
+  (`:ooxml_disguised_part`), DDE fields or formulas in a part outside `word/` / `xl/`, and
+  connections, DDE/external links or macro sheets under another name
+  (`:ooxml_forbidden_content`, `:ooxml_forbidden_content_type`) are rejected. Relationship
+  types are an allowlist; namespace-prefixed `TargetMode` decoys are ignored.
+- OOXML: XML is tokenized in linear time (a ~1 kB upload could burn the whole timeout);
+  malformed XML and encodings other than UTF-8/ASCII/Latin-1 are rejected
+  (`:ooxml_malformed_xml`).
+- PDF: reject attachments that need no `/EmbeddedFile` type or name tree (`/EF`,
+  `/FileAttachment`, `/Filespec`, `/Collection`).
+- Sandbox: temp files of a child killed on timeout or a resource limit are removed.
+
 ## 0.2.0
 
 - PDF: object streams are found by `/ObjStm` or `/First` and their dictionaries parsed with a real

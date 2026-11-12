@@ -278,4 +278,14 @@ class UploadInspectorTest < Minitest::Test
     path = write_file('a.pdf', clean_pdf)
     assert_rejected check(path, 'a.pdf', sandbox: true, timeout: 0.001), :timeout
   end
+
+  # A killed child cannot clean up, so its temp directory belongs to the parent.
+  def test_sandbox_leaves_no_temp_directory_behind
+    path = write_file('a.zip', zip_bytes('a.pdf' => clean_pdf))
+    work_dirs = -> { Dir.children(Dir.tmpdir).grep(/\Aupload_inspector\d/) }
+    before = work_dirs.call
+    assert check(path, 'a.zip', sandbox: true).safe?
+    assert_rejected check(path, 'a.zip', sandbox: true, timeout: 0.001), :timeout
+    assert_equal before, work_dirs.call
+  end
 end
