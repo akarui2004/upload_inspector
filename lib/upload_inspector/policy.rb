@@ -34,6 +34,9 @@ module UploadInspector
       raise ArgumentError, "unknown policy option(s): #{unknown.join(', ')}" if unknown.any?
 
       merged = DEFAULTS.merge(options)
+      # The sandbox deadline needs a real number; nil here used to raise TypeError mid-check.
+      raise ArgumentError, 'timeout must be a positive number' unless merged[:timeout].is_a?(Numeric) && merged[:timeout].positive?
+
       merged[:allowed_types] = Array(merged[:allowed_types]).map(&:to_s).freeze
       merged[:allow_unverifiable] = Array(merged[:allow_unverifiable]).map(&:to_s).freeze
       super(**merged)
