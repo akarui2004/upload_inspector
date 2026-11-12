@@ -1,0 +1,28 @@
+# Publishes to rubygems.org via Trusted Publishing (OIDC, no API key stored).
+# Run manually from the Actions tab after bumping lib/upload_inspector/version.rb on main.
+# `rake release` builds the gem, creates and pushes the vX.Y.Z tag, then pushes the gem.
+name: Release
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    uses: ./.github/workflows/ci.yml
+
+  release:
+    needs: test
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: write # push the version tag
+      id-token: write # OIDC token for rubygems.org Trusted Publishing
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+          bundler-cache: true
+      - uses: rubygems/release-gem@v1
