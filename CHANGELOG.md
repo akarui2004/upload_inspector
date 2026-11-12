@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0
 
 - PDF: object streams are found by `/ObjStm` or `/First` and their dictionaries parsed with a real
   lexer; comments, strings, fake object headers, indirect `/Filter` values and a missing `/Type`
