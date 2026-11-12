@@ -5,13 +5,14 @@ module UploadInspector
 
   # Inspection limits and allowlists. Defaults are deliberately strict (PDF only).
   #
-  # allowed_types      - MIME types whose structure this gem can verify (PDF family, OOXML, zip).
+  # allowed_types      - MIME types whose structure this gem can verify (PDF family, OOXML, zip,
+  #                      PNG / JPEG / GIF / WebP, SVG).
   # allow_unverifiable - MIME types accepted on real-type + extension match only, because their
   #                      content cannot be inspected (e.g. image/vnd.adobe.photoshop). Opt-in risk.
   Policy = Data.define(
     :allowed_types, :allow_unverifiable, :max_file_size,
     :max_zip_entries, :max_zip_entry_size, :max_zip_total_size, :max_compression_ratio,
-    :max_inflate_size, :timeout, :memory_limit, :cpu_limit
+    :max_inflate_size, :max_image_pixels, :timeout, :memory_limit, :cpu_limit
   )
 
   class Policy
@@ -23,7 +24,8 @@ module UploadInspector
       max_zip_entry_size: 200 * MEGABYTE,
       max_zip_total_size: 1024 * MEGABYTE,
       max_compression_ratio: 100,
-      max_inflate_size: 50 * MEGABYTE, # per PDF object stream / per OOXML XML part
+      max_inflate_size: 50 * MEGABYTE, # per PDF object stream / per OOXML XML part / per SVG file
+      max_image_pixels: 100_000_000, # declared width x height of an image or animation frame
       timeout: 60, # seconds, wall clock (sandbox only)
       memory_limit: 1024 * MEGABYTE, # RLIMIT_DATA for the sandbox child; nil disables
       cpu_limit: 60, # seconds, RLIMIT_CPU for the sandbox child; nil disables

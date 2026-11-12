@@ -59,10 +59,15 @@ module UploadInspector
 
     def inspect_structure!(path, detected)
       head = File.binread(path, 8)
+      verifiable = policy.allowed_types.include?(detected)
       if head.start_with?(PDF_MAGIC)
         PdfInspector.new(policy).verify!(path)
-      elsif head.start_with?(ZIP_MAGIC) && policy.allowed_types.include?(detected)
+      elsif head.start_with?(ZIP_MAGIC) && verifiable
         ZipInspector.new(policy, depth:).verify!(path, detected)
+      elsif verifiable && ImageInspector::FORMATS.key?(detected)
+        ImageInspector.new(policy).verify!(path, detected)
+      elsif verifiable && detected == SvgInspector::TYPE
+        SvgInspector.new(policy).verify!(path)
       elsif !policy.allow_unverifiable.include?(detected)
         reject!(:unverifiable_type, detected)
       end
