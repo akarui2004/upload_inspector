@@ -61,6 +61,12 @@ class UploadInspectorTest < Minitest::Test
     assert_raises(ArgumentError) { UploadInspector::Policy.new(nope: 1) }
   end
 
+  def test_invalid_timeout_raises_at_policy_build
+    [nil, 0, -1, '60'].each do |timeout|
+      assert_raises(ArgumentError) { UploadInspector::Policy.new(timeout:) }
+    end
+  end
+
   # --- PDF -------------------------------------------------------------------
 
   def test_rejects_pdf_javascript
@@ -142,7 +148,7 @@ class UploadInspectorTest < Minitest::Test
   end
 
   def test_rejects_unknown_part
-    path = write_file('a.docx', docx_bytes(extra: { 'word/payload.exe' => 'MZ' }))
+    path = write_file('a.docx', docx_bytes(extra: { 'word/payload.bin' => 'MZ' }))
     assert_rejected check(path, 'a.docx'), :ooxml_unknown_part
   end
 
@@ -154,13 +160,13 @@ class UploadInspectorTest < Minitest::Test
   end
 
   def test_rejects_remote_template_injection
-    relationships = rels('Id="r1" Type="http://x/relationships/attachedTemplate" Target="http://evil/t.dotm" TargetMode="External"')
+    relationships = rels('Id="r1" Type="http://x/relationships/attachedTemplate" Target="https://attacker.invalid/t.dotm" TargetMode="External"')
     path = write_file('a.docx', docx_bytes(document_rels: relationships))
     assert_rejected check(path, 'a.docx'), :ooxml_external_relationship
   end
 
   def test_rejects_external_mode_hidden_with_entities
-    relationships = rels('Id="r1" Type="http://x/relationships/oleObject" Target="mhtml:http://evil/!x" TargetMode="&#x45;xternal"')
+    relationships = rels('Id="r1" Type="http://x/relationships/oleObject" Target="mhtml:https://attacker.invalid/!x" TargetMode="&#x45;xternal"')
     path = write_file('a.docx', docx_bytes(document_rels: relationships))
     assert_rejected check(path, 'a.docx'), :ooxml_external_relationship
   end
@@ -169,13 +175,13 @@ class UploadInspectorTest < Minitest::Test
     web = rels('Id="r1" Type="http://x/relationships/hyperlink" Target="https://example.com" TargetMode="External"')
     assert check(write_file('a.docx', docx_bytes(document_rels: web)), 'a.docx').safe?
 
-    local = rels('Id="r1" Type="http://x/relationships/hyperlink" Target="file:///C:/Windows/System32/cmd.exe" TargetMode="External"')
+    local = rels('Id="r1" Type="http://x/relationships/hyperlink" Target="file://attacker.invalid/share/x.txt" TargetMode="External"')
     assert_rejected check(write_file('b.docx', docx_bytes(document_rels: local)), 'b.docx'), :ooxml_external_relationship
   end
 
   def test_rejects_dde_field_split_across_runs
     document = '<w:document xmlns:w="w"><w:body><w:p>' \
-               '<w:r><w:instrText>DD</w:instrText></w:r><w:r><w:instrText>EAUTO c:\\\\windows\\\\cmd.exe</w:instrText></w:r>' \
+               '<w:r><w:instrText>DD</w:instrText></w:r><w:r><w:instrText>EAUTO placeholder</w:instrText></w:r>' \
                '</w:p></w:body></w:document>'
     path = write_file('a.docx', docx_bytes(document_xml: document))
     assert_rejected check(path, 'a.docx'), :ooxml_dangerous_field
@@ -219,7 +225,7 @@ class UploadInspectorTest < Minitest::Test
   end
 
   def test_rejects_zip_member_executable
-    path = write_file('a.zip', zip_bytes('setup.exe' => "MZ\x90\x00".b + ("\x00".b * 200)))
+    path = write_file('a.zip', zip_bytes('setup.bin' => "MZ\x90\x00".b + ("\x00".b * 200)))
     assert_rejected check(path, 'a.zip'), :type_not_allowed
   end
 
