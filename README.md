@@ -8,10 +8,11 @@ A file is accepted only when its structure is proven to match a known-safe shape
 unparsable, encrypted, oversized, or erroring is rejected. Pure Ruby (`marcel`, `rubyzip`), no AV engine,
 no native parsers, nothing is rendered or executed.
 
-> **Not an antivirus.** It blocks structural attack vectors (disguised executables, macros, PDF
-> JavaScript, OLE objects, remote templates, DDE, zip bombs, image polyglots, scripted SVG). It does not detect malware signatures or
-> exploits hidden inside otherwise valid content. Pair it with an AV scanner (e.g. Amazon GuardDuty
-> Malware Protection for S3, endpoint AV) when you need that.
+> **Not an antivirus.** It blocks structural attack vectors: disguised executables, macros, PDF
+> JavaScript, OLE objects, remote templates, DDE, zip bombs, image polyglots, scripted SVG and
+> CSV injection. It does not detect malware signatures or exploits hidden inside otherwise valid
+> content. Pair it with an AV scanner (e.g. Amazon GuardDuty Malware Protection for S3, endpoint
+> AV) when you need that.
 
 ## What it checks
 
@@ -23,6 +24,7 @@ no native parsers, nothing is rendered or executed.
 | PNG / JPEG / GIF / WebP | container walked block by block (nothing is decoded): every length must stay inside the file, declared dimensions within `max_image_pixels`, and nothing may follow the end of the image (appended scripts or archives). JPEG files holding several images back to back (HDR gain maps, MPF) are accepted; other trailers (motion-photo video, vendor data) are rejected, re-encode those |
 | HEIC / HEIF / AVIF / MP4 / QuickTime | box structure walked (nothing is decoded): every box length must stay inside its parent and the boxes must cover the file exactly (no appended data), `ftyp` must come first and name a brand of the detected type, images need a `meta` box and video a `moov` box, declared image (`ispe`) and track (`tkhd`) dimensions within `max_image_pixels`. Files whose brand Marcel does not know are reported as QuickTime and rejected unless the brand is `qt  `; data hidden inside a box (e.g. a zip in a trailing `free` box) is not detected |
 | SVG | static only: rejects script elements, `on*` handlers, `javascript:`/`data:` links (also set through animation), XHTML/MathML content, stylesheet processing instructions, DTDs other than the standard W3C DOCTYPE, CSS `@import`/escapes, and any reference outside the file (`href`, `src`, CSS `url()`) except `#fragment`, embedded `data:image/png|jpeg|gif|webp` and http(s)/mailto links on `<a>` |
+| CSV / TSV / TXT | valid UTF-8 (BOM allowed; UTF-16 and legacy code pages rejected), no NUL or control characters other than tab/CR/LF, at most `max_inflate_size`. CSV/TSV also reject cells a spreadsheet would run as a function call or DDE (`=HYPERLINK(...)`, `+cmd\|...`, `@SUM(...)`), found after any comma, semicolon or tab and inside quotes; negative numbers, phone numbers, `@handles` and plain arithmetic are accepted. `allow_csv_formulas: true` turns this off |
 | zip | path traversal, symlinks, encrypted entries, duplicates, entry/total size and compression-ratio limits, nested archives; every member extracted (bounded) and inspected with the same policy |
 | Others | rejected unless listed in `allow_unverifiable` (type + extension check only) |
 
@@ -36,8 +38,8 @@ Text-only PDFs are unaffected. For image-heavy PDFs (scans, `.ai` artwork) keep 
 MB, or expect to ask users to re-export. Skipping stream data is not an option without
 following the cross-reference table the way a reader does, because objects can hide in it.
 
-Images, SVG and media are verified when their MIME type is in `allowed_types`
-(`image/png image/jpeg image/gif image/webp image/svg+xml image/heic image/heif image/avif video/mp4 video/quicktime`). Listing them in `allow_unverifiable`
+Images, SVG, media and text are verified when their MIME type is in `allowed_types`
+(`image/png image/jpeg image/gif image/webp image/svg+xml image/heic image/heif image/avif video/mp4 video/quicktime text/csv text/tab-separated-values text/plain`). Listing them in `allow_unverifiable`
 instead skips these checks.
 
 ## Install
@@ -50,37 +52,105 @@ Requires Ruby >= 3.2.
 
 ## Usage
 
-```ruby
-result = UploadInspector.check(
-  '/tmp/upload.pdf',
-  filename: 'design.pdf',                      # client-supplied name
-  allowed_types: %w[application/pdf application/zip],
-)
+- [Quick start](#quick-start)
+- [What you can pass in](#what-you-can-pass-in)
+- [Rails validator and job](#rails-validator-and-job)
+- [Error messages](#error-messages)
+- [S3 (presigned URL uploads)](#s3-presigned-url-uploads)
+- [Protecting the server from large files](#protecting-the-server-from-large-files)
+- [Policy options](#policy-options)
 
-result.safe?          # => true / false
-result.reason         # => :pdf_active_content, :pdf_unsafe_uri, :type_not_allowed, ... (nil when safe)
-result.detail         # => human-readable hint
-result.detected_type  # => "application/pdf"
-```
-
-### Rails uploads, files and IO
-
-`check` takes a path or the upload object itself. Rails/Rack uploads and Active Storage carry the
-client-supplied name; a path, `File`, `Tempfile` or plain IO needs `filename:`.
+### Quick start
 
 ```ruby
-# Controller: ActionDispatch::Http::UploadedFile (name from original_filename)
+ALLOWED_TYPES = %w[application/pdf image/png image/jpeg text/csv].freeze
+
 result = UploadInspector.check(params[:file], allowed_types: ALLOWED_TYPES)
 
-# Active Storage attachment or blob (downloaded to a temp file for the check)
-result = UploadInspector.check(record.document, allowed_types: ALLOWED_TYPES)
-record.document.purge_later unless result.safe?
-
-# File / Tempfile / StringIO (IO is copied to a temp file, at most max_file_size + 1 bytes)
-result = UploadInspector.check(io, filename: "report.pdf", allowed_types: ALLOWED_TYPES)
+if result.safe?
+  # store the file
+else
+  render json: { error: result.message }, status: :unprocessable_entity
+end
 ```
 
-Run it in a background job for large files.
+Every call returns a `Result` and never raises on a hostile file:
+
+| Method | Value |
+|---|---|
+| `safe?` | `true` when the file is accepted |
+| `reason` | why it was rejected, e.g. `:pdf_active_content`, `:extension_mismatch` (`nil` when safe) |
+| `message` | end-user message for the reason, e.g. `"is password-protected"` (`nil` when safe) |
+| `detail` | technical hint for logs, not for end users |
+| `detected_type` | the real MIME type, e.g. `"application/pdf"` |
+
+Only types in `allowed_types` are accepted (default: PDF only). See [What it checks](#what-it-checks)
+for the types that get a structural check.
+
+### What you can pass in
+
+`check` takes the upload object itself. Rails/Rack uploads and Active Storage carry the
+client-supplied name; anything else needs `filename:` (its extension must match the content).
+
+```ruby
+# Controller upload (ActionDispatch::Http::UploadedFile)
+UploadInspector.check(params[:file], allowed_types: ALLOWED_TYPES)
+
+# Active Storage attachment or blob (downloaded to a temp file first)
+UploadInspector.check(contract.document, allowed_types: ALLOWED_TYPES)
+
+# Path, File, Tempfile, StringIO or any IO
+UploadInspector.check("/tmp/upload.bin", filename: "report.pdf", allowed_types: ALLOWED_TYPES)
+UploadInspector.check(io, filename: "report.pdf", allowed_types: ALLOWED_TYPES)
+```
+
+Inspection takes up to `timeout` (60 s by default): check large files in a background job.
+
+### Rails validator and job
+
+Both load on first use; the gem does not depend on Rails.
+
+```ruby
+class Contract < ApplicationRecord
+  has_one_attached :document
+
+  # Checks files uploaded with this request, before save. Keep it to small files.
+  validates :document, upload_inspector: { allowed_types: ALLOWED_TYPES }
+end
+```
+
+The error type is the rejection reason (`errors.details` shows `{ error: :pdf_active_content }`),
+the message comes from `result.message`. The validator covers `UploadedFile`s and
+`attach(io:, filename:)`. Blobs already in storage (direct uploads, signed blob ids) are skipped,
+and form strings are never read as server paths. Check those with the job:
+
+```ruby
+# After save, the file is in storage. Unsafe attachments are purged.
+UploadInspector::InspectJob.perform_later(contract, "document", allowed_types: ALLOWED_TYPES)
+
+# React to a rejection: subclass and override on_unsafe (called after the purge).
+class InspectUploadJob < UploadInspector::InspectJob
+  def on_unsafe(record, name, attachment, result)
+    UploadMailer.rejected(record, attachment.filename.to_s, result.message).deliver_later
+  end
+end
+```
+
+Pass `purge: false` to keep unsafe files. Options are the same keywords as `check`.
+
+### Error messages
+
+`result.message` gives an end-user message for the reason ("is password-protected", "does not
+match its file extension", ...). Translate or override any of them under
+`upload_inspector.errors.<reason>`, with `upload_inspector.errors.default` as the fallback:
+
+```yaml
+vi:
+  upload_inspector:
+    errors:
+      default: "chứa nội dung không được phép"
+      too_large: "quá lớn"
+```
 
 ### S3 (presigned URL uploads)
 
@@ -90,12 +160,17 @@ rejected without downloading), downloads the object pinned to that ETag, and ins
 `client` is any `Aws::S3::Client` (aws-sdk-s3 is not a dependency of this gem).
 
 ```ruby
+s3 = Aws::S3::Client.new
+
 result = UploadInspector.check_s3(
-  client: Aws::S3::Client.new, bucket: "uploads", key: "incoming/abc/report.pdf",
-  filename: "report.pdf",   # defaults to the key basename
-  version_id: nil,          # pin a version on versioned buckets
+  client: s3,
+  bucket: "uploads",
+  key: "incoming/abc/report.pdf",
+  filename: "report.pdf",  # optional, defaults to the key basename
+  version_id: nil,         # optional, pin a version on versioned buckets
   allowed_types: ALLOWED_TYPES,
 )
+
 s3.delete_object(bucket: "uploads", key: "incoming/abc/report.pdf") unless result.safe?
 ```
 
@@ -140,8 +215,9 @@ to bound is disk and time:
 | `max_file_size` | 500 MB |
 | `max_zip_entries` / `max_zip_entry_size` / `max_zip_total_size` | 5 000 / 200 MB / 1 GB |
 | `max_compression_ratio` | 100 (entries ≥ 1 MB) |
-| `max_inflate_size` | 50 MB per PDF object stream / OOXML XML part / SVG file |
+| `max_inflate_size` | 50 MB per PDF object stream / OOXML XML part / SVG or text file |
 | `max_image_pixels` | 100 000 000 (declared width × height) |
+| `allow_csv_formulas` | `false` |
 | `timeout` / `cpu_limit` | 60 s / 60 s |
 | `memory_limit` | 1 GB (`RLIMIT_DATA`, Linux only) |
 
@@ -159,11 +235,12 @@ Tests build hostile-shaped samples in memory (no real malware, no AV test signat
 Run them in a container or CI rather than on a workstation with endpoint AV:
 
 ```sh
-docker run --rm -v "$PWD":/src:ro ruby:3.3-slim \
-  bash -c 'cp -r /src /app && cd /app && bundle install && bundle exec rake test'
+docker run --rm -v "$PWD":/src:ro ruby:3.3 \
+  bash -c 'cp -r /src /app && cd /app && rm -rf vendor .bundle && bundle install && bundle exec rake test'
 ```
 
-CI runs the suite on Ruby 3.2 / 3.3 / 3.4 against rubyzip 2.3 and 3.x.
+CI runs the suite on Ruby 3.2 / 3.3 / 3.4 against rubyzip 2.3 and 3.x. The Rails helper tests
+use `activemodel` / `activejob` from the Gemfile (development only).
 
 `test/sample_virus_malware.rb` is the hostile-sample corpus: every attack shape with its expected
 verdict, plus known gaps (skipped until fixed). `bundle exec rake samples[DIR]` writes the inert

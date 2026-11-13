@@ -8,22 +8,17 @@ Gem::Specification.new do |spec|
   spec.authors = ['Minh Doan']
   spec.email = ['minhdpc@gmail.com']
 
-  spec.summary = 'Fail-closed structural inspection of untrusted uploads (PDF, Office, zip, images, HEIC/AVIF, MP4/MOV, S3).'
-  spec.description = <<~DESC
-    Checks uploaded files against an allowlist, verifies their detected type against the file
-    extension, and applies format-specific structural checks. Rejects risky PDF content such as
-    scripts and embedded files; Office macros, external relationships, and DDE fields; scripted
-    SVGs; malformed or trailing data in PNG, JPEG, GIF, WebP, HEIC, AVIF, MP4 and QuickTime
-    files, and oversized declared dimensions; and unsafe zip archives, including path traversal
-    and decompression bombs. Inspection runs in a resource-limited child process. Pure Ruby; it
-    is not an antivirus and does not detect malware signatures.
-  
-    Usage:
-      UploadInspector.check(params[:file], allowed_types: %w[application/pdf image/heic video/mp4])
-      UploadInspector.check(record.document, allowed_types: ...)   # Active Storage
-      UploadInspector.check(io, filename: "a.pdf", allowed_types: ...)
-      UploadInspector.check_s3(client: Aws::S3::Client.new, bucket: "b", key: "k.pdf", allowed_types: ...)
-    Each returns a Result: safe?, reason, detail, detected_type.
+  spec.summary = 'Fail-closed structural inspection of untrusted uploads (PDF, Office, zip, images, video, CSV, Rails, S3).'
+  spec.description = <<~DESC.tr("\n", " ").strip
+    Fail-closed checks for untrusted uploads: the real file type must be allowlisted and match
+    the extension, and PDF, Office, zip, SVG, PNG, JPEG, GIF, WebP, HEIC, AVIF, MP4 and
+    QuickTime files are verified structurally (scripts, macros, external links, appended data,
+    zip and pixel bombs are rejected), as are CSV/TXT files (UTF-8 only, no binary, no CSV
+    injection). Works with file paths, Rails uploads, Active Storage, any IO and S3 objects
+    uploaded through presigned URLs, and ships a Rails validator and background job.
+    Inspection runs in a resource-limited child process.
+    Pure Ruby, not an antivirus. If this gem helps you, a star on GitHub is much appreciated!
+    Usage and options: https://github.com/akarui2004/upload_inspector#usage
   DESC
   spec.license = 'MIT'
   spec.required_ruby_version = '>= 3.2'
