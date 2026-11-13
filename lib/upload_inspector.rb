@@ -37,6 +37,10 @@ module UploadInspector
   # Other keywords are Policy options.
   def self.check(source, filename: nil, sandbox: true, **policy_options)
     policy = Policy.new(**policy_options)
+    # Active Storage knows the size up front: reject before downloading the blob to disk.
+    size = source.respond_to?(:byte_size) ? source.byte_size.to_i : 0
+    return Result.reject(:too_large, "#{size} bytes") if size > policy.max_file_size
+
     Source.open(source, filename:, max_size: policy.max_file_size) do |path, name|
       next Sandbox.run(path, filename: name, policy:) if sandbox
 

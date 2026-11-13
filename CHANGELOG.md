@@ -8,6 +8,8 @@
 - `check_s3` inspects an S3 object (e.g. uploaded via presigned URL) with any `Aws::S3::Client`:
   oversized objects are rejected from `HeadObject` without download; the download is pinned to
   the checked ETag.
+- Active Storage blobs larger than `max_file_size` are rejected from `byte_size` before download.
+  README documents bounding disk, download time and upload size.
 ## 0.3.0
 
 - Images: PNG, JPEG, GIF and WebP in `allowed_types` are now structurally verified (bounds,

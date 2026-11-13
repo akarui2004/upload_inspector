@@ -103,6 +103,33 @@ deleting a file over an outage. Upload to a quarantine prefix nothing serves, an
 to its final key only once it is safe: a presigned URL can overwrite the object after the check
 until it expires (use `copy_object` with `copy_source_if_match` and the checked ETag).
 
+### Protecting the server from large files
+
+No input is read into Ruby memory: S3 objects and IO are streamed to a temp file, Rails uploads
+are already on disk (Rack buffers them), and inspection runs in the memory-limited sandbox.
+Formats like zip, Office and PDF need random access, so the whole file must be on disk. What is left
+to bound is disk and time:
+
+- **Size before download.** `check_s3` rejects from `HeadObject`, Active Storage from
+  `byte_size`, IO stops at `max_file_size + 1` bytes. Set `max_file_size` to what you actually
+  accept, not the 500 MB default.
+- **Refuse oversized uploads at the source.** Rails: cap the request body in the web server
+  (nginx `client_max_body_size`). S3: hand out a presigned **POST** with a size range; a presigned
+  PUT cannot enforce one.
+
+  ```ruby
+  post = Aws::S3::Bucket.new("uploads").presigned_post(
+    key: "incoming/#{SecureRandom.uuid}/${filename}",
+    content_length_range: 1..(20 * 1024 * 1024),
+    expires: Time.now + 300,
+  )
+  ```
+- **Download time.** `timeout` covers inspection only, not the S3 download. Bound the download
+  on the client you pass in, e.g. `Aws::S3::Client.new(http_open_timeout: 5, http_read_timeout: 30, retry_limit: 2)`.
+- **Disk under load.** Each concurrent check can use up to `max_file_size` of temp disk (plus
+  extracted zip members, up to `max_zip_total_size`). Run checks in a job queue with capped
+  concurrency and size the temp volume for `concurrency × max_file_size`.
+
 ### Policy options
 
 | Option | Default |

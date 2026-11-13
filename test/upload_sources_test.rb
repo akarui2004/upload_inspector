@@ -65,6 +65,13 @@ class UploadSourcesTest < Minitest::Test
     assert check(blob).safe?
   end
 
+  def test_oversized_blob_is_not_downloaded
+    blob = Blob.new('design.pdf', clean_pdf, tmp_path('blob'))
+    blob.define_singleton_method(:byte_size) { bytes.bytesize }
+    blob.define_singleton_method(:open) { flunk 'blob downloaded' }
+    assert_equal :too_large, check(blob, max_file_size: 10).reason
+  end
+
   def test_plain_io_is_copied_with_a_size_cap
     assert check(StringIO.new(clean_pdf), filename: 'a.pdf').safe?
     assert_equal :too_large, check(StringIO.new(clean_pdf), filename: 'a.pdf', max_file_size: 10).reason
