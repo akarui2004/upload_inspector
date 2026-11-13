@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.0
+
+- HEIC, HEIF, AVIF, MP4 and QuickTime in `allowed_types` are now structurally verified (box
+  bounds, no appended data, `ftyp` brand matching the detected type, `meta`/`moov` present,
+  declared dimensions within `max_image_pixels`) instead of `:unverifiable_type`. New reasons
+  `:media_malformed`, `:media_brand_mismatch`.
+
 ## 0.4.0
 
 - `check` accepts upload objects: Rails/Rack `UploadedFile` and Active Storage blobs/attachments
