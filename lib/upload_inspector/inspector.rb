@@ -68,6 +68,8 @@ module UploadInspector
         ImageInspector.new(policy).verify!(path, detected)
       elsif verifiable && IsoBmffInspector::TYPES.include?(detected)
         IsoBmffInspector.new(policy).verify!(path, detected)
+      elsif verifiable && TextInspector::TYPES.include?(detected)
+        TextInspector.new(policy).verify!(path, detected)
       elsif verifiable && detected == SvgInspector::TYPE
         SvgInspector.new(policy).verify!(path)
       elsif !policy.allow_unverifiable.include?(detected)

@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.0
+
+- Text: `text/csv`, `text/tab-separated-values` and `text/plain` in `allowed_types` are verified:
+  valid UTF-8, no NUL/control characters, CSV/TSV cells that would run as a spreadsheet
+  function or DDE rejected (`:csv_formula`, opt out with `allow_csv_formulas: true`). New reasons
+  `:text_too_large`, `:text_unsupported_encoding`, `:text_binary_content`, `:csv_formula`.
+- Rails: `validates :file, upload_inspector: {...}` checks request uploads before save;
+  `UploadInspector::InspectJob` checks stored attachments in the background, purges unsafe ones
+  and calls `on_unsafe`. Both autoload; Rails is still not a dependency.
+- `Result#message`: end-user message per reason, translatable under `upload_inspector.errors.*`.
+- Checking an IO now rewinds it afterwards, so it can still be stored (`attach(io:)`).
+
 ## 0.5.0
 
 - HEIC, HEIF, AVIF, MP4 and QuickTime in `allowed_types` are now structurally verified (box
