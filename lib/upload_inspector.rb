@@ -7,6 +7,7 @@ require 'zlib'
 
 require_relative 'upload_inspector/version'
 require_relative 'upload_inspector/result'
+require_relative 'upload_inspector/messages'
 require_relative 'upload_inspector/policy'
 require_relative 'upload_inspector/xml_scanner'
 require_relative 'upload_inspector/pdf_object_parser'
@@ -14,6 +15,7 @@ require_relative 'upload_inspector/pdf_inspector'
 require_relative 'upload_inspector/svg_inspector'
 require_relative 'upload_inspector/image_inspector'
 require_relative 'upload_inspector/iso_bmff_inspector'
+require_relative 'upload_inspector/text_inspector'
 require_relative 'upload_inspector/ooxml_inspector'
 require_relative 'upload_inspector/zip_inspector'
 require_relative 'upload_inspector/inspector'
@@ -25,6 +27,9 @@ require_relative 'upload_inspector/s3'
 # Only content proven to match a known-safe structure is accepted; anything
 # unknown, unparsable, or erroring is rejected.
 module UploadInspector
+  # Rails helpers, loaded on first use so the gem does not depend on Rails.
+  autoload :InspectJob, File.expand_path('upload_inspector/inspect_job', __dir__)
+
   # Inspects an upload. Never raises on hostile input: always returns a Result.
   #
   #   UploadInspector.check('/tmp/x.pdf', filename: 'design.pdf', allowed_types: ['application/pdf'])
@@ -58,3 +63,5 @@ module UploadInspector
     S3.check(client:, bucket:, key:, filename:, version_id:, sandbox:, policy: Policy.new(**policy_options))
   end
 end
+
+autoload :UploadInspectorValidator, File.expand_path('upload_inspector/upload_inspector_validator', __dir__)
