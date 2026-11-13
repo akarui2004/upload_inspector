@@ -66,6 +66,8 @@ module UploadInspector
         ZipInspector.new(policy, depth:).verify!(path, detected)
       elsif verifiable && ImageInspector::FORMATS.key?(detected)
         ImageInspector.new(policy).verify!(path, detected)
+      elsif verifiable && IsoBmffInspector::TYPES.include?(detected)
+        IsoBmffInspector.new(policy).verify!(path, detected)
       elsif verifiable && detected == SvgInspector::TYPE
         SvgInspector.new(policy).verify!(path)
       elsif !policy.allow_unverifiable.include?(detected)
