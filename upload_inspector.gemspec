@@ -8,14 +8,16 @@ Gem::Specification.new do |spec|
   spec.authors = ['Minh Doan']
   spec.email = ['minhdpc@gmail.com']
 
-  spec.summary = 'Fail-closed structural inspection of untrusted uploads (PDF, Office, zip).'
+  spec.summary = 'Fail-closed structural inspection of untrusted uploads (PDF, Office, zip, images, S3).'
   spec.description = <<~DESC
     Checks uploaded files against an allowlist, verifies their detected type against the file
     extension, and applies format-specific structural checks. Rejects risky PDF content such as
     scripts and embedded files; Office macros, external relationships, and DDE fields; scripted
     SVGs; malformed or trailing image data; and unsafe zip archives, including path traversal
-    and decompression bombs. Inspection runs in a resource-limited child process. Pure Ruby;
-    it is not an antivirus and does not detect malware signatures.
+    and decompression bombs. Accepts a path, a Rails or Rack upload, an Active Storage
+    attachment, any IO, or an S3 object uploaded through a presigned URL (any Aws::S3::Client).
+    Inspection runs in a resource-limited child process. Pure Ruby; it is not an antivirus and
+    does not detect malware signatures.
   DESC
   spec.license = 'MIT'
   spec.required_ruby_version = '>= 3.2'

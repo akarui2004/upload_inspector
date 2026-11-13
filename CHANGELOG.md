@@ -1,6 +1,14 @@
 # Changelog
 
-## Unreleased
+## 0.4.0
+
+- `check` accepts upload objects: Rails/Rack `UploadedFile` and Active Storage blobs/attachments
+  (name taken from the upload), `File`/`Tempfile`/`Pathname` and readable IO. `filename:` is
+  optional when the source carries a name.
+- `check_s3` inspects an S3 object (e.g. uploaded via presigned URL) with any `Aws::S3::Client`:
+  oversized objects are rejected from `HeadObject` without download; the download is pinned to
+  the checked ETag.
+## 0.3.0
 
 - Images: PNG, JPEG, GIF and WebP in `allowed_types` are now structurally verified (bounds,
   `max_image_pixels`, no data after the end of the image) instead of `:unverifiable_type`.

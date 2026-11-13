@@ -1,6 +1,8 @@
 # upload_inspector
 
 Fail-closed structural inspection of untrusted uploaded files for any Ruby or Rails app.
+Checks a path, a Rails upload, an Active Storage attachment, any IO, or an S3 object uploaded
+through a presigned URL.
 
 A file is accepted only when its structure is proven to match a known-safe shape. Anything unknown,
 unparsable, encrypted, oversized, or erroring is rejected. Pure Ruby (`marcel`, `rubyzip`), no AV engine,
@@ -60,16 +62,46 @@ result.detail         # => human-readable hint
 result.detected_type  # => "application/pdf"
 ```
 
-### Rails / Active Storage
+### Rails uploads, files and IO
+
+`check` takes a path or the upload object itself. Rails/Rack uploads and Active Storage carry the
+client-supplied name; a path, `File`, `Tempfile` or plain IO needs `filename:`.
 
 ```ruby
-result = blob.open do |file|
-  UploadInspector.check(file.path, filename: blob.filename.to_s, allowed_types: ALLOWED_TYPES)
-end
-blob.purge_later unless result.safe?
+# Controller: ActionDispatch::Http::UploadedFile (name from original_filename)
+result = UploadInspector.check(params[:file], allowed_types: ALLOWED_TYPES)
+
+# Active Storage attachment or blob (downloaded to a temp file for the check)
+result = UploadInspector.check(record.document, allowed_types: ALLOWED_TYPES)
+record.document.purge_later unless result.safe?
+
+# File / Tempfile / StringIO (IO is copied to a temp file, at most max_file_size + 1 bytes)
+result = UploadInspector.check(io, filename: "report.pdf", allowed_types: ALLOWED_TYPES)
 ```
 
 Run it in a background job for large files.
+
+### S3 (presigned URL uploads)
+
+Files uploaded straight to S3 never pass through the app, and the browser chose their
+Content-Type and size. `check_s3` reads the size with `HeadObject` (oversized objects are
+rejected without downloading), downloads the object pinned to that ETag, and inspects the bytes.
+`client` is any `Aws::S3::Client` (aws-sdk-s3 is not a dependency of this gem).
+
+```ruby
+result = UploadInspector.check_s3(
+  client: Aws::S3::Client.new, bucket: "uploads", key: "incoming/abc/report.pdf",
+  filename: "report.pdf",   # defaults to the key basename
+  version_id: nil,          # pin a version on versioned buckets
+  allowed_types: ALLOWED_TYPES,
+)
+s3.delete_object(bucket: "uploads", key: "incoming/abc/report.pdf") unless result.safe?
+```
+
+S3 errors (missing key, access denied, network) raise, so a job retries rather than
+deleting a file over an outage. Upload to a quarantine prefix nothing serves, and move the object
+to its final key only once it is safe: a presigned URL can overwrite the object after the check
+until it expires (use `copy_object` with `copy_source_if_match` and the checked ETag).
 
 ### Policy options
 
