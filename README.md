@@ -246,12 +246,6 @@ use `activemodel` / `activejob` from the Gemfile (development only).
 verdict, plus known gaps (skipped until fixed). `bundle exec rake samples[DIR]` writes the inert
 samples to disk (default `tmp/samples`) to cross-check against real readers or other scanners.
 
-### Releasing
-
-1. Bump `lib/upload_inspector/version.rb`, update `CHANGELOG.md`, merge to `main`.
-2. Actions → **Release** → *Run workflow*. It runs CI, tags `vX.Y.Z` and publishes via
-   rubygems.org Trusted Publishing.
-
 ## License
 
 MIT
