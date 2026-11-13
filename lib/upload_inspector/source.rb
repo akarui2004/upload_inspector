@@ -41,11 +41,13 @@ module UploadInspector
     end
 
     # Copies one byte past the limit so an oversized stream is still rejected as :too_large
-    # without buffering all of it.
+    # without buffering all of it. The IO is rewound afterwards: the caller usually stores it
+    # next (e.g. Active Storage attach(io:)), which would otherwise save an empty file.
     def copy_to_tempfile(io, max_size)
       Tempfile.create('upload_inspector', binmode: true) do |tmp|
         io.rewind if io.respond_to?(:rewind)
         IO.copy_stream(io, tmp, max_size + 1)
+        io.rewind if io.respond_to?(:rewind)
         tmp.flush
         yield tmp.path
       end

@@ -12,7 +12,7 @@ module UploadInspector
   Policy = Data.define(
     :allowed_types, :allow_unverifiable, :max_file_size,
     :max_zip_entries, :max_zip_entry_size, :max_zip_total_size, :max_compression_ratio,
-    :max_inflate_size, :max_image_pixels, :timeout, :memory_limit, :cpu_limit
+    :max_inflate_size, :max_image_pixels, :allow_csv_formulas, :timeout, :memory_limit, :cpu_limit
   )
 
   class Policy
@@ -24,8 +24,9 @@ module UploadInspector
       max_zip_entry_size: 200 * MEGABYTE,
       max_zip_total_size: 1024 * MEGABYTE,
       max_compression_ratio: 100,
-      max_inflate_size: 50 * MEGABYTE, # per PDF object stream / per OOXML XML part / per SVG file
+      max_inflate_size: 50 * MEGABYTE, # per PDF object stream / OOXML XML part / SVG or text file
       max_image_pixels: 100_000_000, # declared width x height of an image or animation frame
+      allow_csv_formulas: false, # true accepts CSV/TSV cells a spreadsheet would run as formulas
       timeout: 60, # seconds, wall clock (sandbox only)
       memory_limit: 1024 * MEGABYTE, # RLIMIT_DATA for the sandbox child; nil disables
       cpu_limit: 60, # seconds, RLIMIT_CPU for the sandbox child; nil disables

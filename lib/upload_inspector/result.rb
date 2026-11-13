@@ -12,6 +12,9 @@ module UploadInspector
     end
 
     def safe? = safe
+
+    # End-user message for the rejection (see Messages), nil when safe.
+    def message = reason && Messages.for(reason)
   end
 
   # Raised internally by inspectors; converted to a rejected Result at the boundary.
