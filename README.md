@@ -13,18 +13,21 @@ no native parsers, nothing is rendered or executed.
 > CSV injection. It does not detect malware signatures or exploits hidden inside otherwise valid
 > content. Pair it with an AV scanner (e.g. Amazon GuardDuty Malware Protection for S3, endpoint
 > AV) when you need that.
+>
+> What it does and does not defend against: [THREAT_MODEL.md](THREAT_MODEL.md). Report
+> vulnerabilities privately: [SECURITY.md](SECURITY.md).
 
 ## What it checks
 
 | Format | Checks |
 |---|---|
-| All | real type by magic bytes (Marcel) must be allowlisted; file extension must agree with content; size limit |
+| All | real type by magic bytes (Marcel) must be allowlisted; file extension must agree with content; size limit; file name without bidi overrides (`invoice\u202Efdp.exe`), control characters or an executable extension before the last one (`shell.php.jpg`, `invoice.exe.pdf`) |
 | PDF (and PDF-based `.ai`) | rejects `/JavaScript /JS /Launch /EmbeddedFile(s) /EF /FileAttachment /Filespec /Collection /RichMedia /XFA /SubmitForm /ImportData /GoToR /GoToE /Rendition`, hex-escaped spellings included, also inside compressed object streams (located by `/ObjStm` or `/First` and parsed with a real PDF lexer, so comments, strings and fake headers cannot hide them); rejects risky parsers (`/JBIG2Decode`, 3D/U3D/PRC, PostScript XObjects), URI links other than http(s)/mailto/relative (`file:`, UNC, `javascript:`, indirect values), encrypted PDFs and unsupported object-stream filters |
 | docx / pptx / xlsx | every part name must match an allowlist, and no check trusts a part's path (Office finds parts through content types and relationships): every part is inspected as XML or proven not to be XML, every XML part gets every check, and only relationship types known to be passive are accepted. Rejects VBA, `embeddings/`, `activeX/`, macro sheets, external data (connections, query tables, external/DDE/OLE links, Power Query) by part name, content type, relationship type and element, macro content types, DTDs, external relationships other than http(s)/mailto hyperlinks, Word DDE/INCLUDE(TEXT/PICTURE)/IMPORT/LINK/QUOTE/DATABASE/MACROBUTTON fields, PowerPoint program/macro actions, Excel DDE formulas and defined names, malformed XML, XML that is not UTF-8/ASCII/Latin-1; checks run on entity-decoded text and CDATA |
 | PNG / JPEG / GIF / WebP | container walked block by block (nothing is decoded): every length must stay inside the file, declared dimensions within `max_image_pixels`, and nothing may follow the end of the image (appended scripts or archives). JPEG files holding several images back to back (HDR gain maps, MPF) are accepted; other trailers (motion-photo video, vendor data) are rejected, re-encode those |
 | HEIC / HEIF / AVIF / MP4 / QuickTime | box structure walked (nothing is decoded): every box length must stay inside its parent and the boxes must cover the file exactly (no appended data), `ftyp` must come first and name a brand of the detected type, images need a `meta` box and video a `moov` box, declared image (`ispe`) and track (`tkhd`) dimensions within `max_image_pixels`. Files whose brand Marcel does not know are reported as QuickTime and rejected unless the brand is `qt  `; data hidden inside a box (e.g. a zip in a trailing `free` box) is not detected |
 | SVG | static only: rejects script elements, `on*` handlers, `javascript:`/`data:` links (also set through animation), XHTML/MathML content, stylesheet processing instructions, DTDs other than the standard W3C DOCTYPE, CSS `@import`/escapes, and any reference outside the file (`href`, `src`, CSS `url()`) except `#fragment`, embedded `data:image/png|jpeg|gif|webp` and http(s)/mailto links on `<a>` |
-| CSV / TSV / TXT | valid UTF-8 (BOM allowed; UTF-16 and legacy code pages rejected), no NUL or control characters other than tab/CR/LF, at most `max_inflate_size`. CSV/TSV also reject cells a spreadsheet would run as a function call or DDE (`=HYPERLINK(...)`, `+cmd\|...`, `@SUM(...)`), found after any comma, semicolon or tab and inside quotes; negative numbers, phone numbers, `@handles` and plain arithmetic are accepted. `allow_csv_formulas: true` turns this off |
+| CSV / TSV / TXT | valid UTF-8 (BOM allowed; UTF-16 and legacy code pages rejected), no NUL or control characters other than tab/CR/LF, at most `max_inflate_size`. No HTML, SVG or server-side tags (`<script`, `<html`, `<svg`, `<img`, `<iframe`, `<?php`, `<%`, ..., any tag with an `on*=` handler, and at the start the signatures browsers sniff as HTML such as `<p>`, `<div>`, `<!--`; `a<b` and `<b>` mid-text are fine), which a sniffing browser would render as a page; `allow_text_markup: true` turns this off. CSV/TSV also reject cells a spreadsheet would run as a function call or DDE (`=HYPERLINK(...)`, `+cmd\|...`, `@SUM(...)`), found after any comma, semicolon or tab and inside quotes; negative numbers, phone numbers, `@handles` and plain arithmetic are accepted. `allow_csv_formulas: true` turns this off |
 | zip | path traversal, symlinks, encrypted entries, duplicates, entry/total size and compression-ratio limits, nested archives; every member extracted (bounded) and inspected with the same policy |
 | Others | rejected unless listed in `allow_unverifiable` (type + extension check only) |
 
@@ -55,6 +58,9 @@ Requires Ruby >= 3.2.
 - [Quick start](#quick-start)
 - [What you can pass in](#what-you-can-pass-in)
 - [Rails validator and job](#rails-validator-and-job)
+- [Presets](#presets)
+- [Shadow mode and instrumentation](#shadow-mode-and-instrumentation)
+- [Serving uploads safely](#serving-uploads-safely)
 - [Error messages](#error-messages)
 - [S3 (presigned URL uploads)](#s3-presigned-url-uploads)
 - [Protecting the server from large files](#protecting-the-server-from-large-files)
@@ -83,6 +89,7 @@ Every call returns a `Result` and never raises on a hostile file:
 | `message` | end-user message for the reason, e.g. `"is password-protected"` (`nil` when safe) |
 | `detail` | technical hint for logs, not for end users |
 | `detected_type` | the real MIME type, e.g. `"application/pdf"` |
+| `would_reject` | in `mode: :report`, the reason the file would have been rejected (`nil` otherwise) |
 
 Only types in `allowed_types` are accepted (default: PDF only). See [What it checks](#what-it-checks)
 for the types that get a structural check.
@@ -137,6 +144,78 @@ end
 ```
 
 Pass `purge: false` to keep unsafe files. Options are the same keywords as `check`.
+
+### Presets
+
+`UploadInspector::Presets` holds frozen `allowed_types` lists of verified types, to combine freely.
+The default stays PDF only.
+
+| Preset | Types |
+|---|---|
+| `PDF` | PDF |
+| `OFFICE` | docx, xlsx, pptx |
+| `DOCUMENTS` | `PDF` + `OFFICE` |
+| `IMAGES` | PNG, JPEG, GIF, WebP, HEIC, HEIF, AVIF |
+| `SVG` | SVG |
+| `MEDIA` | MP4, QuickTime |
+| `TEXT` | plain text, CSV, TSV |
+
+```ruby
+UploadInspector.check(file, allowed_types: UploadInspector::Presets::IMAGES + UploadInspector::Presets::DOCUMENTS)
+```
+
+### Shadow mode and instrumentation
+
+To roll out on a live app, measure first: `mode: :report` runs every check but always accepts,
+and sets `result.would_reject` to the reason it would have rejected. The validator never adds an
+error and the job never purges.
+
+```ruby
+validates :document, upload_inspector: { allowed_types: ALLOWED_TYPES, mode: :report }
+```
+
+When ActiveSupport is loaded, every `check` / `check_s3` publishes `check.upload_inspector`
+(the event's `duration` is the check time):
+
+```ruby
+ActiveSupport::Notifications.subscribe("check.upload_inspector") do |event|
+  # event.payload: { mode:, reason:, would_reject:, detected_type:, filename_ext:, size: }
+  rejected = event.payload[:reason] || event.payload[:would_reject]
+  Rails.logger.info("upload_inspector #{rejected || 'safe'} #{event.payload[:filename_ext]} #{event.duration.round}ms")
+end
+```
+
+### Serving uploads safely
+
+A checked file can still be dangerous if the app serves it so a browser renders it as a page.
+
+- Serve user files from a separate domain (e.g. `usercontent.example.com` or the S3/CDN domain),
+  never from the app's own origin, so a rendered file cannot read the app's cookies.
+- Send `Content-Disposition: attachment` (download, not render) except for raster images and
+  video, and always `X-Content-Type-Options: nosniff`. A strict CSP with `sandbox` blocks scripts
+  if a file is rendered anyway. Keep SVG and PDF as attachments: browsers run SVG script when the
+  SVG is opened directly, and Chrome refuses to show PDFs under a `sandbox` CSP.
+- Never reuse the client's name as is. `UploadInspector.safe_filename(name, detected_type:)`
+  drops the path, control and bidi characters, inner dots (`x.php.jpg` → `x_php.jpg`) and Windows
+  reserved names, caps it at 255 bytes, and takes the extension from the detected type.
+
+`safe_headers` builds those headers (`inline: true` is honoured for raster images and video only):
+
+```ruby
+result = UploadInspector.check(path, filename: name, allowed_types: ALLOWED_TYPES)
+response.headers.merge!(UploadInspector.safe_headers(result, filename: name, inline: true))
+# Content-Type (application/octet-stream unless safe), Content-Disposition,
+# X-Content-Type-Options: nosniff, Content-Security-Policy: default-src 'none'; ...; sandbox
+```
+
+Active Storage serves only `content_types_allowed_inline` inline and forces
+`content_types_to_serve_as_binary` (HTML, SVG, ...) to download; keep SVG and text in the latter.
+For S3, set the headers on the presigned GET:
+
+```ruby
+s3_object.presigned_url(:get, response_content_disposition: "attachment; filename=\"#{safe_name}\"",
+                              response_content_type: result.detected_type)
+```
 
 ### Error messages
 
@@ -218,6 +297,7 @@ to bound is disk and time:
 | `max_inflate_size` | 50 MB per PDF object stream / OOXML XML part / SVG or text file |
 | `max_image_pixels` | 100 000 000 (declared width × height) |
 | `allow_csv_formulas` | `false` |
+| `allow_text_markup` | `false` |
 | `timeout` / `cpu_limit` | 60 s / 60 s |
 | `memory_limit` | 1 GB (`RLIMIT_DATA`, Linux only) |
 

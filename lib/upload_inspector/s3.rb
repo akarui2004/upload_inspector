@@ -14,7 +14,7 @@ module UploadInspector
 
     # Returns a Result. S3/network errors (missing key, access denied, timeouts) raise, so a
     # job retries instead of treating an outage as a hostile file.
-    def check(client:, bucket:, key:, filename:, version_id:, sandbox:, policy:)
+    def check(client:, bucket:, key:, filename:, version_id:, sandbox:, policy:, payload: {})
       object = { bucket:, key:, version_id: }.compact
       head = client.head_object(**object)
       size = head.content_length.to_i
@@ -25,7 +25,7 @@ module UploadInspector
         # if_match pins the download to the object that was size-checked: an overwrite
         # in between fails the download instead of slipping a bigger file through.
         client.get_object(**object, if_match: head.etag, response_target: path)
-        UploadInspector.check(path, filename: filename || File.basename(key), sandbox:, **policy.to_h)
+        UploadInspector.inspect_source(path, filename: filename || File.basename(key), sandbox:, policy:, payload:)
       end
     end
   end
