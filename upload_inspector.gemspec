@@ -13,9 +13,12 @@ Gem::Specification.new do |spec|
     Fail-closed checks for untrusted uploads: the real file type must be allowlisted and match
     the extension, and PDF, Office, zip, SVG, PNG, JPEG, GIF, WebP, HEIC, AVIF, MP4 and
     QuickTime files are verified structurally (scripts, macros, external links, appended data,
-    zip and pixel bombs are rejected), as are CSV/TXT files (UTF-8 only, no binary, no CSV
-    injection). Works with file paths, Rails uploads, Active Storage, any IO and S3 objects
-    uploaded through presigned URLs, and ships a Rails validator and background job.
+    zip and pixel bombs are rejected), as are CSV/TXT files (UTF-8 only, no binary, no HTML or
+    script tags, no CSV injection). File names with hidden extensions (shell.php.jpg) or bidi
+    tricks are rejected. Works with file paths, Rails uploads, Active Storage, any IO and S3
+    objects uploaded through presigned URLs, and ships a Rails validator, a background job,
+    type presets, a report-only shadow mode, ActiveSupport instrumentation and helpers to serve
+    files safely (safe file names and response headers).
     Inspection runs in a resource-limited child process.
     Pure Ruby, not an antivirus. If this gem helps you, a star on GitHub is much appreciated!
     Usage and options: https://github.com/akarui2004/upload_inspector#usage
