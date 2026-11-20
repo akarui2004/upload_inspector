@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.7.0
+
+- Text: `.txt/.csv/.tsv` with HTML, SVG or server-side tags (`<script`, `<html`, `<svg`, `<img`,
+  `<?php`, `<%`, ...) are rejected as `:text_markup` (opt out with `allow_text_markup: true`).
+- File names: bidi overrides, control characters and an executable extension before the last one
+  (`shell.php.jpg`, `invoice.exe.pdf`, also inside zips) are rejected as `:filename_unsafe`. A
+  name that is not valid UTF-8 no longer raises from the sandbox.
+- `UploadInspector.safe_filename(name, detected_type:)`: a name safe to store and serve.
+- `UploadInspector.safe_headers(result, filename:, inline:)`: response headers for serving a
+  checked file (download by default, `nosniff`, sandboxing CSP); README guide on serving uploads.
+- `UploadInspector::Presets` (`IMAGES`, `DOCUMENTS`, `OFFICE`, `PDF`, `SVG`, `MEDIA`, `TEXT`).
+- Shadow mode: `mode: :report` on `check`, `check_s3`, the validator and the job accepts every
+  file and sets `Result#would_reject`.
+- Instrumentation: `check.upload_inspector` via `ActiveSupport::Notifications` when loaded.
+- `SECURITY.md` (private vulnerability reporting) and `THREAT_MODEL.md`.
+
 ## 0.6.0
 
 - Text: `text/csv`, `text/tab-separated-values` and `text/plain` in `allowed_types` are verified:
