@@ -29,11 +29,12 @@ module UploadInspector
     # @handles stay accepted.
     FORMULA_ACTION = /\p{L}[\p{L}\d_.]*\(|\|/
     # Anywhere: opening tags that run or load something, any tag with an event handler
-    # ("<details open ontoggle=...>", '<x/onclick=...>'), and server-side tags. Data like "a<b",
-    # "x < html" or "<b>bold</b>" passes.
+    # ("<details open ontoggle=...>", '<x/onclick=...>', '<x title=">" onclick=...>': a quoted
+    # value may hold ">" or "<"), and server-side tags. Data like "a<b", "x < html" or
+    # "<b>bold</b>" passes.
     MARKUP = %r{
-      <(?:script|html|head|body|iframe|frame|svg|object|embed|meta|base|link|style|img)[\s/>]
-      | <[a-z][^<>]*[\s/"']on[a-z]+\s*=
+      <(?:script|html|head|body|iframe|frame|svg|math|form|object|embed|meta|base|link|style|img)[\s/>]
+      | <[a-z](?:[^<>"']|"[^"]*"|'[^']*')*?(?:[\s/]|(?<=["']))on[a-z]+\s*=
       | <\?php | <% | <!doctype\s+html
     }xi
     # At the start (after whitespace), the WHATWG MIME sniffing signatures that make a browser
