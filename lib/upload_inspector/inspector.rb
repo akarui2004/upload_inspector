@@ -26,6 +26,8 @@ module UploadInspector
 
     # Raises Rejection when the file is not proven safe; returns the detected MIME type.
     def verify!(path, filename)
+      unsafe_name = Filename.unsafe_reason(filename)
+      reject!(:filename_unsafe, unsafe_name) if unsafe_name
       check_size!(path)
       @detected_type = detect_type(path, filename)
       reject!(:type_not_allowed, @detected_type) unless policy.permitted_type?(@detected_type)
