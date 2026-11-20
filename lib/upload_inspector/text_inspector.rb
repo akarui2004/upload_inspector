@@ -28,16 +28,13 @@ module UploadInspector
     # (program|topic!item); arithmetic, negative numbers, phone numbers like +1 (555) 010 and
     # @handles stay accepted.
     FORMULA_ACTION = /\p{L}[\p{L}\d_.]*\(|\|/
-    # Anywhere: opening tags that run or load something, any tag with an event handler
-    # ("<details open ontoggle=...>", '<x/onclick=...>', '<x title=">" onclick=...>': a quoted
-    # value may hold ">" or "<"; a quote opens a value only right after "=", elsewhere it is a
-    # literal: "<x a'b onclick=...>"), and server-side tags. Two scans, either rejects: one
-    # ignoring quotes, one stepping over quoted values. Data like "a<b", "x < html" or
-    # "<b>bold</b>" passes.
+    # Anywhere: opening tags that run or load something, raw-text elements (their content is
+    # not read as tags, which would desync HtmlHandlerScanner from the browser) and server-side
+    # tags. Event handlers on any tag are found by HtmlHandlerScanner. Data like "a<b",
+    # "x < html" or "<b>bold</b>" passes.
     MARKUP = %r{
-      <(?:script|html|head|body|iframe|frame|svg|math|form|object|embed|meta|base|link|style|img)[\s/>]
-      | <[a-z][^<>]*[\s/"']on[a-z]+\s*=
-      | <[a-z](?:[^<>=]|=\s*"[^"]*"|=\s*'[^']*'|=)*?(?:[\s/]|(?<=["']))on[a-z]+\s*=
+      <(?:script|html|head|body|iframe|frame|svg|math|form|object|embed|meta|base|link|style|img
+         |textarea|title|xmp|noembed|noframes|noscript|plaintext|template)[\s/>]
       | <\?php | <% | <!doctype\s+html
     }xi
     # At the start (after whitespace), the WHATWG MIME sniffing signatures that make a browser
@@ -63,7 +60,7 @@ module UploadInspector
   private
 
     def check_markup!(text)
-      found = text[SNIFFED_AS_HTML] || text[MARKUP]
+      found = text[SNIFFED_AS_HTML] || text[MARKUP] || HtmlHandlerScanner.find(text)
       reject!(:text_markup, found.strip[0, 40]) if found
     end
 
