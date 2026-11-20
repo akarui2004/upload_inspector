@@ -21,16 +21,16 @@ Gem::Specification.new do |spec|
     files safely (safe file names and response headers).
     Inspection runs in a resource-limited child process.
     Pure Ruby, not an antivirus. If this gem helps you, a star on GitHub is much appreciated!
-    Usage and options: https://github.com/akarui2004/upload_inspector#usage
+    Usage and options: https://akarui2004.github.io/upload_inspector
   DESC
   spec.license = 'MIT'
   spec.required_ruby_version = '>= 3.2'
 
   spec.metadata['rubygems_mfa_required'] = 'true'
   spec.metadata['changelog_uri'] = 'https://github.com/akarui2004/upload_inspector/blob/main/CHANGELOG.md'
-  spec.metadata['documentation_uri'] = 'https://github.com/akarui2004/upload_inspector#usage'
+  spec.metadata['documentation_uri'] = 'https://akarui2004.github.io/upload_inspector'
   spec.metadata['source_code_uri'] = 'https://github.com/akarui2004/upload_inspector'
-  spec.homepage = 'https://github.com/akarui2004/upload_inspector'
+  spec.homepage = 'https://akarui2004.github.io/upload_inspector'
 
   spec.files = Dir['lib/**/*.rb', 'README.md', 'CHANGELOG.md', 'LICENSE.txt']
   spec.require_paths = ['lib']
