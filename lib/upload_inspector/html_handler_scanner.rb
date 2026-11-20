@@ -25,11 +25,11 @@ module UploadInspector
           # "<!-->" and "<!--->" end at once; otherwise "-->" or "--!>"; unterminated runs to the end.
           scanner.skip(/-?>/) || scanner.skip_until(/--!?>/) || break
         elsif scanner.skip(%r{/?[A-Za-z]}) # start or end tag
-          scanner.skip(%r{[^\s/>]*})
+          scanner.skip(%r{[^\t\n\f\r />]*})
           handler = attributes(scanner)
           return handler if handler
 
-          scanner.skip(%r{[\s/]*>})
+          scanner.skip(%r{[\t\n\f\r /]*>})
         elsif scanner.skip(%r{[!?/]}) # bogus comment
           scanner.skip_until(/>/) || break
         end
@@ -37,9 +37,10 @@ module UploadInspector
       nil
     end
 
+    # Whitespace is HTML's (tab, LF, FF, CR, space), not Ruby's \s, which also holds VT.
     # One attribute: separators, a name (may start with "=", holds quotes and "<" as plain
     # characters), then an optional "=" value, quoted or not.
-    ATTRIBUTE = %r{[\s/]*([^\s/>][^\s/>=]*)\s*(?:=\s*(?:"[^"]*"?|'[^']*'?|[^\s>]*))?}
+    ATTRIBUTE = %r{[\t\n\f\r /]*([^\t\n\f\r />][^\t\n\f\r />=]*)[\t\n\f\r ]*(?:=[\t\n\f\r ]*(?:"[^"]*"?|'[^']*'?|[^\t\n\f\r >]*))?}
 
     # Reads attributes up to the ">" that ends the tag; returns the first handler name.
     def attributes(scanner)

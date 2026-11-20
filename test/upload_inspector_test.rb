@@ -343,4 +343,13 @@ class UploadInspectorTest < Minitest::Test
     assert check(path, 'a.txt', allowed_types: UploadInspector::Presets::TEXT).safe?
     assert all.all?(&:frozen?)
   end
+
+  # VT is not HTML whitespace: it stays inside the unquoted value, so the quote that follows
+  # is literal and the next tag is real.
+  def test_handler_scanner_uses_html_whitespace
+    scan = UploadInspector::HtmlHandlerScanner
+    assert_equal 'onclick', scan.find("<x a=b\v\"> <y onclick=1>")
+    assert_equal 'onclick', scan.find("<x\fonclick=1>")
+    assert_nil scan.find("<x a=\"\v onclick=1\">")
+  end
 end
