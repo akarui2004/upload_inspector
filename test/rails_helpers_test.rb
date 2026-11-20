@@ -35,6 +35,13 @@ class RailsHelpersTest < Minitest::Test
     validates :file, upload_inspector: { allowed_types: %w[application/pdf], sandbox: false }
   end
 
+  class ShadowDocument
+    include ActiveModel::Model
+    attr_accessor :file
+
+    validates :file, upload_inspector: { allowed_types: %w[application/pdf], sandbox: false, mode: :report }
+  end
+
   def valid_document(**attributes)
     document = Document.new(**attributes)
     [document.valid?, document]
@@ -99,5 +106,17 @@ class RailsHelpersTest < Minitest::Test
     UploadInspector::InspectJob.perform_now(Record.new(One.new(bad)), 'documents', purge: false, sandbox: false)
     refute bad.purged
     UploadInspector::InspectJob.perform_now(Record.new(One.new(nil)), 'documents', sandbox: false)
+  end
+
+  def test_report_mode_never_blocks_and_publishes_the_check
+    events = []
+    subscriber = ActiveSupport::Notifications.subscribe('check.upload_inspector') { events << _1.payload }
+    upload = UploadedFile.new('a.zip', write_file('RackMultipart3', clean_pdf))
+    assert ShadowDocument.new(file: upload).valid?
+    assert_equal({ mode: :report, filename_ext: '.zip', size: clean_pdf.bytesize, reason: nil,
+                   would_reject: :extension_mismatch, detected_type: 'application/pdf', },
+                 events.last)
+  ensure
+    ActiveSupport::Notifications.unsubscribe(subscriber)
   end
 end
