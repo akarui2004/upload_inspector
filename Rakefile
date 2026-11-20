@@ -19,7 +19,7 @@ task :samples, [:dir] do |_, args|
   FileUtils.mkdir_p(dir)
   SampleVirusMalware::SAMPLES.each do |sample|
     status = sample.gap ? 'GAP' : sample.expect
-    File.binwrite(File.join(dir, "#{sample.id}__#{sample.filename}"), sample.bytes)
+    File.binwrite(File.join(dir, "#{sample.id}__#{sample.filename.tr("\0", '_')}"), sample.bytes)
     puts format('%-34s %-30s %s', sample.id, status, sample.attack)
   end
 end

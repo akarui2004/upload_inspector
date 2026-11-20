@@ -9,7 +9,7 @@ module UploadInspector
   #   # after record.save (the file is in storage once save returns)
   #   UploadInspector::InspectJob.perform_later(record, 'document', allowed_types: %w[application/pdf])
   #
-  # Options are UploadInspector.check keywords; purge: false keeps unsafe files (e.g. for
+  # Options are UploadInspector.check keywords (mode: :report never purges); purge: false keeps unsafe files (e.g. for
   # review). To react to a rejection (notify the uploader, flag the record), subclass and
   # override #on_unsafe, then enqueue the subclass.
   class InspectJob < ActiveJob::Base

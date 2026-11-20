@@ -288,4 +288,59 @@ class UploadInspectorTest < Minitest::Test
     assert_rejected check(path, 'a.zip', sandbox: true, timeout: 0.001), :timeout
     assert_equal before, work_dirs.call
   end
+
+  # --- report mode, file names, serving ---------------------------------------
+
+  def test_report_mode_accepts_but_keeps_the_reason
+    path = write_file('a.zip', clean_pdf)
+    result = check(path, 'a.zip', mode: :report)
+    assert result.safe?
+    assert_nil result.reason
+    assert_equal :extension_mismatch, result.would_reject
+    assert_nil check(write_file('b.pdf', clean_pdf), 'b.pdf', mode: :report).would_reject
+    assert_equal :extension_mismatch, check(path, 'a.zip', mode: :report, sandbox: true).would_reject
+    assert_raises(ArgumentError) { check(path, 'a.zip', mode: :warn) }
+  end
+
+  def test_hostile_names_are_rejected_not_raised
+    path = write_file('a.pdf', clean_pdf)
+    ["a\0.pdf", (+"a\xFF.pdf").force_encoding('UTF-8'), (+"a\xFF.pdf").b].each do |name|
+      assert_rejected check(path, name, sandbox: true), :filename_unsafe
+    end
+  end
+
+  def test_safe_filename
+    jpeg = 'image/jpeg'
+    assert_equal 'x_php.jpg', UploadInspector.safe_filename('../../x.php.jpg', detected_type: jpeg)
+    assert_equal 'photo.jpeg', UploadInspector.safe_filename('C:\\Users\\a\\photo.JPEG', detected_type: jpeg)
+    assert_equal 'invoicefdp.pdf', UploadInspector.safe_filename("invoice\u202Efdp.exe", detected_type: 'application/pdf')
+    assert_equal '_CON.txt', UploadInspector.safe_filename('CON.txt', detected_type: 'text/plain')
+    assert_equal 'file.pdf', UploadInspector.safe_filename('...', detected_type: 'application/pdf')
+    assert_equal 'a_b.pdf', UploadInspector.safe_filename('a<b>?.pdf', detected_type: 'application/pdf')
+    long = UploadInspector.safe_filename("#{'é' * 300}.pdf", detected_type: 'application/pdf')
+    assert_operator long.bytesize, :<=, 255
+    assert long.valid_encoding?
+    assert long.end_with?('.pdf')
+  end
+
+  def test_safe_headers
+    safe = UploadInspector::Result.accept('image/png')
+    headers = UploadInspector.safe_headers(safe, filename: 'ảnh "1".png', inline: true)
+    assert_equal 'image/png', headers['Content-Type']
+    assert_equal %(inline; filename="_nh _1.png"; filename*=UTF-8''%E1%BA%A3nh%20_1.png), headers['Content-Disposition']
+    assert_equal 'nosniff', headers['X-Content-Type-Options']
+    assert_includes headers['Content-Security-Policy'], 'sandbox'
+
+    svg = UploadInspector.safe_headers(UploadInspector::Result.accept('image/svg+xml'), inline: true)
+    assert_equal 'attachment', svg['Content-Disposition']
+    assert_equal 'text/csv; charset=utf-8', UploadInspector.safe_headers(UploadInspector::Result.accept('text/csv'))['Content-Type']
+    assert_equal 'application/octet-stream', UploadInspector.safe_headers(UploadInspector::Result.reject(:x))['Content-Type']
+  end
+
+  def test_presets_are_verified_types
+    all = UploadInspector::Presets.constants.flat_map { UploadInspector::Presets.const_get(_1) }
+    path = write_file('a.txt', 'hello')
+    assert check(path, 'a.txt', allowed_types: UploadInspector::Presets::TEXT).safe?
+    assert all.all?(&:frozen?)
+  end
 end
