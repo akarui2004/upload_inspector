@@ -10,18 +10,21 @@ module UploadInspector
   # Assumes no raw-text element (script, style, textarea, title, ...), whose content a
   # browser does not read as tags: TextInspector rejects those tags before this runs.
   module HtmlHandlerScanner
-    HANDLER = /\Aon[a-z]/i
+    # ASCII classes without /i: under Unicode case folding [a-z] also matches U+017F and U+212A,
+    # which a browser reads as plain text, not as a tag start.
+    HANDLER = /\Aon[A-Za-z]/
+    TAG_START = %r{<(?=[A-Za-z!?/])}
 
     module_function
 
     # Returns the first handler attribute name, or nil.
     def find(text)
       scanner = StringScanner.new(text)
-      while scanner.skip_until(%r{<(?=[a-z!?/])}i) # "<" before anything else is text
+      while scanner.skip_until(TAG_START) # "<" before anything else is text
         if scanner.skip(/!--/)
           # "<!-->" and "<!--->" end at once; otherwise "-->" or "--!>"; unterminated runs to the end.
           scanner.skip(/-?>/) || scanner.skip_until(/--!?>/) || break
-        elsif scanner.skip(%r{/?[a-z]}i) # start or end tag
+        elsif scanner.skip(%r{/?[A-Za-z]}) # start or end tag
           scanner.skip(%r{[^\s/>]*})
           handler = attributes(scanner)
           return handler if handler
