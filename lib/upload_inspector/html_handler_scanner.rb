@@ -12,7 +12,7 @@ module UploadInspector
   module HtmlHandlerScanner
     # ASCII classes without /i: under Unicode case folding [a-z] also matches U+017F and U+212A,
     # which a browser reads as plain text, not as a tag start.
-    HANDLER = /\Aon[A-Za-z]/
+    HANDLER = /\A[oO][nN][A-Za-z]/ # attribute names are case-insensitive in HTML
     TAG_START = %r{<(?=[A-Za-z!?/])}
 
     module_function
