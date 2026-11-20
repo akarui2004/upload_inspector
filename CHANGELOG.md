@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.2
+
+- Rewritten code to clean up.
+
 ## 0.7.1
 
 - Documentation site: https://akarui2004.github.io/upload_inspector (gem description, homepage and
