@@ -49,11 +49,11 @@ module UploadInspector
     end
 
     # Magic bytes win over the name; the name only refines a magic match (e.g. zip -> docx).
-    # Compound files (legacy Office) are typed from their directory, which Marcel cannot read.
+    # Compound files (legacy Office) are typed from their directory only, which Marcel cannot
+    # read; one holding no Office document stays generic whatever its name.
     def detect_type(path, filename)
       if File.binread(path, CfbReader::MAGIC.bytesize) == CfbReader::MAGIC
-        type = CfbReader.open(path) { |reader| OleInspector.detect_type(reader) }
-        return type if type
+        return CfbReader.open(path) { |reader| OleInspector.detect_type(reader) } || CfbReader::TYPE
       end
       File.open(path, 'rb') { |io| Marcel::MimeType.for(io, name: filename.to_s) }
     end
