@@ -34,7 +34,8 @@ later opened by a person, a browser or a server process where it does harm.
   structure check cannot see. Pair the gem with an antivirus or malware scanner.
 - **Data hidden inside an allowed structure** (steganography, a zip inside an MP4 `free` box,
   pixel data). It is inert unless another flaw extracts it; re-encoding removes it.
-- **Phishing content**: links to http(s) sites and social-engineering text are allowed.
+- **Phishing content**: links to http(s) sites and social-engineering text are allowed (PDF links that
+  open with no click are rejected; `Result#links` lists the links found so the app can check them).
 - **Types in `allow_unverifiable`**: only the real type and extension are checked.
 - **The app's serving and storage**: see the assumptions below.
 

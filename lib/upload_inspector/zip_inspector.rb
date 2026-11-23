@@ -13,14 +13,18 @@ module UploadInspector
       application/vnd.openxmlformats-officedocument.wordprocessingml.document
       application/vnd.openxmlformats-officedocument.presentationml.presentation
       application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+      application/vnd.openxmlformats-officedocument.wordprocessingml.template
+      application/vnd.openxmlformats-officedocument.presentationml.template
+      application/vnd.openxmlformats-officedocument.spreadsheetml.template
     ].freeze
     NESTED_ARCHIVE = /\.(?:zip|7z|rar|gz|tgz|bz2|xz|zst|tar|jar|war|ear|apk|ipa|cab|iso|img|dmg|vhdx?|arj|lzh|lha|z)\z/i
     READ_CHUNK_SIZE = 64 * 1024
     RATIO_CHECK_MIN_SIZE = MEGABYTE # tiny files compress extremely well legitimately
 
-    def initialize(policy, depth:)
+    def initialize(policy, depth:, links: [])
       @policy = policy
       @depth = depth
+      @links = links
     end
 
     def verify!(path, detected_type)
@@ -28,7 +32,9 @@ module UploadInspector
         entries = zip.entries
         check_entries!(entries)
         if OOXML_TYPES.include?(detected_type)
-          OoxmlInspector.new(policy, self).verify!(entries)
+          OoxmlInspector.new(policy, self, links:).verify!(entries)
+        elsif OdfInspector::TYPES.include?(detected_type)
+          OdfInspector.new(policy, self, links:).verify!(entries, detected_type)
         else
           verify_archive_members!(entries)
         end
@@ -55,7 +61,7 @@ module UploadInspector
 
   private
 
-    attr_reader :policy, :depth
+    attr_reader :policy, :depth, :links
 
     def check_entries!(entries)
       reject!(:zip_empty) if entries.empty?
@@ -110,7 +116,7 @@ module UploadInspector
     end
 
     def verify_member!(member_path, name)
-      Inspector.new(policy, depth: depth + 1).verify!(member_path, File.basename(name))
+      Inspector.new(policy, depth: depth + 1, links:).verify!(member_path, File.basename(name))
     rescue Rejection => e
       raise Rejection.new(e.reason, [name, e.detail].compact.join(': '))
     end

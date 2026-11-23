@@ -8,10 +8,10 @@ Gem::Specification.new do |spec|
   spec.authors = ['Minh Doan']
   spec.email = ['minhdpc@gmail.com']
 
-  spec.summary = 'Fail-closed structural inspection of untrusted uploads (PDF, Office, zip, images, video, CSV, Rails, S3).'
+  spec.summary = 'Fail-closed structural inspection of untrusted uploads (PDF, Office, RTF, ODF, zip, images, video, CSV, Rails, S3).'
   spec.description = <<~DESC.tr("\n", " ").strip
     Fail-closed checks for untrusted uploads: the real file type must be allowlisted and match
-    the extension, and PDF, Office, zip, SVG, PNG, JPEG, GIF, WebP, HEIC, AVIF, MP4 and
+    the extension, and PDF, Office (OOXML, 97-2003, RTF, OpenDocument), zip, SVG, PNG, JPEG, GIF, WebP, HEIC, AVIF, MP4 and
     QuickTime files are verified structurally (scripts, macros, external links, appended data,
     zip and pixel bombs are rejected), as are CSV/TXT files (UTF-8 only, no binary, no HTML or
     script tags, no CSV injection). File names with hidden extensions (shell.php.jpg) or bidi
