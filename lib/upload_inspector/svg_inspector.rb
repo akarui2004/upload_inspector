@@ -10,6 +10,7 @@ module UploadInspector
   # for <a>, to a web/mail address, so opening the file never fetches anything.
   class SvgInspector
     include Rejectable
+    include LinkCollector
 
     TYPE = 'image/svg+xml'
     # The W3C public identifier without an internal subset declares no entities.
@@ -27,8 +28,9 @@ module UploadInspector
     CSS_SCRIPT = /@import|expression\(|javascript:|behavior:|-moz-binding/
     CSS_EXTERNAL = /url\((?!["']?#)|image-set\(|(?<![a-z-])(?:image|src)\(|cross-fade\(/
 
-    def initialize(policy)
+    def initialize(policy, links: [])
       @policy = policy
+      @links = links
     end
 
     def verify!(path)
@@ -94,7 +96,7 @@ module UploadInspector
 
     def check_reference!(element, target)
       return if target.start_with?('#') || target.match?(EMBEDDED_IMAGE)
-      return if element == 'a' && target.match?(WEB_LINK)
+      return add_link(target) if element == 'a' && target.match?(WEB_LINK)
 
       reject!(:svg_active_content, "#{target[0, 40]} link") if target.match?(SCRIPT_SCHEME)
       reject!(:svg_external_reference, target[0, 80])

@@ -6,9 +6,12 @@ module UploadInspector
   # Streams the raw bytes looking for dangerous name tokens (hex-escaped spellings like
   # /J#61vaScript included). Object streams, where dictionaries can hide compressed, are
   # located by their /ObjStm and /First markers, parsed with a real PDF lexer and inflated.
-  # URI actions may only point to web or mail addresses. Nothing is rendered.
+  # URI actions may only point to web or mail addresses, and may not run on their own when the
+  # document or a page opens (/OpenAction, /AA). Links are collected for Result#links, or
+  # rejected with pdf_links: :reject. Nothing is rendered.
   class PdfInspector
     include Rejectable
+    include LinkCollector
 
     CHUNK_SIZE = 4 * MEGABYTE
     INFLATE_CHUNK_SIZE = 64 * 1024
@@ -45,20 +48,29 @@ module UploadInspector
     ENCRYPT_PATTERN = names_regexp('Encrypt')
     OBJSTM_MARKER = names_regexp('ObjStm', 'First') # readers need /First to load an object stream
     URI_PATTERN = names_regexp('URI')
+    AUTO_ACTION_PATTERN = names_regexp('OpenAction', 'AA')
     OBJECT_HEADER = /\d+[\0\t\n\f\r ]+\d+[\0\t\n\f\r ]+obj\b/n
+    NUMBERED_HEADER = /(?<!\d)(\d+)[\0\t\n\f\r ]+(\d+)[\0\t\n\f\r ]+obj(?=[\0\t\n\f\r \/<\[(%])/n
+    # Values worth following: a dictionary or an indirect reference. Anything else after /AA or
+    # /OpenAction is a destination array or stray bytes in binary data.
+    ACTION_VALUE = /\A(?:[\0\t\n\f\r ]|%[^\r\n]*)*(?:<<|\d+[\0\t\n\f\r ]+\d+[\0\t\n\f\r ]+R)/n
+    MAX_ACTION_DEPTH = 16
     NAME_TOKEN = %r{\A/[^\0\t\n\f\r ()<>\[\]{}/%]*}n
     VALUE_END = /\A(?:[\0\t\n\f\r ]|%[^\r\n]*)*(?:>>|\]|\z)/n
 
-    def initialize(policy)
+    def initialize(policy, links: [])
       @policy = policy
+      @links = links
     end
 
     def verify!(path)
-      markers, uris = scan_raw!(path)
+      markers, uris, actions = scan_raw!(path)
       File.open(path, 'rb') do |file|
+        @file = file
         uris.each { |offset| check_uri!(read_at(file, offset, VALUE_WINDOW), 0) }
         inspected = []
         markers.each { |offset| inspect_marker!(file, offset, inspected) }
+        actions.each { |offset| check_auto_action!(read_at(file, offset, VALUE_WINDOW), 0) }
       end
     end
 
@@ -66,10 +78,13 @@ module UploadInspector
 
     attr_reader :policy
 
-    # Returns byte offsets of object stream markers and URI keys.
+    # Returns byte offsets of object stream markers, URI keys and automatic action keys, and
+    # indexes where each numbered object is defined (all definitions: incremental updates).
     def scan_raw!(path)
       markers = []
       uris = []
+      actions = []
+      @objects = Hash.new { |hash, key| hash[key] = [] }
       carry = ''.b
       consumed = 0
       File.open(path, 'rb') do |file|
@@ -79,11 +94,16 @@ module UploadInspector
           scan_tokens!(buffer)
           buffer.scan(OBJSTM_MARKER) { markers << base + Regexp.last_match.begin(0) }
           buffer.scan(URI_PATTERN) { uris << base + Regexp.last_match.begin(0) }
+          buffer.scan(AUTO_ACTION_PATTERN) { actions << base + Regexp.last_match.begin(0) }
+          buffer.scan(NUMBERED_HEADER) do
+            match = Regexp.last_match
+            @objects[[match[1].to_i, match[2].to_i]] |= [base + match.begin(0)]
+          end
           carry = tail(buffer)
           consumed += chunk.bytesize
         end
       end
-      [markers.uniq, uris.uniq]
+      [markers.uniq, uris.uniq, actions.uniq]
     end
 
     def scan_tokens!(buffer)
@@ -139,6 +159,7 @@ module UploadInspector
       end
       scan_tokens!(output)
       output.scan(URI_PATTERN) { check_uri!(output, Regexp.last_match.begin(0)) }
+      output.scan(AUTO_ACTION_PATTERN) { check_auto_action!(output, Regexp.last_match.begin(0)) }
     rescue Zlib::Error => e
       reject!(:pdf_unparsable, "object stream: #{e.message}")
     ensure
@@ -152,26 +173,75 @@ module UploadInspector
       return if buffer.byteslice(value_offset, OVERLAP).match?(VALUE_END) # /URI used as a value: /S /URI >>
 
       value = PdfObjectParser.new(buffer, value_offset).parse_value_at
-      value = value['Base'] if value.is_a?(Hash)
+      base = value.is_a?(Hash)
+      value = value['Base'] if base
       case value
       when PdfObjectParser::PdfString
-        reject!(:pdf_unsafe_uri, value.bytes.inspect) unless safe_uri?(value.bytes)
+        text = uri_text(value.bytes)
+        reject!(:pdf_unsafe_uri, value.bytes.inspect) unless text && safe_uri?(text)
+        record_link!(text) unless base
       when PdfObjectParser::Ref
         reject!(:pdf_unsafe_uri, 'indirect URI value')
       end
     end
 
+    def record_link!(text)
+      reject!(:pdf_link, text[0, 80]) if policy.pdf_links == :reject
+      add_link(text)
+    end
+
     # Readers and browsers drop whitespace/control characters inside URLs ("java\tscript:"),
-    # so they are removed before the scheme is read. Relative links have no scheme and pass.
-    def safe_uri?(bytes)
+    # so they are removed. nil when a UTF-16 string does not decode.
+    def uri_text(bytes)
       text = bytes.start_with?("\xFE\xFF".b) ? bytes.byteslice(2..).force_encoding('UTF-16BE').encode('UTF-8') : bytes
-      text = text.b.gsub(/[\x00-\x20\x7F]/n, '')
+      text.b.gsub(/[\x00-\x20\x7F]/n, '')
+    rescue EncodingError
+      nil
+    end
+
+    # Relative links have no scheme and pass.
+    def safe_uri?(text)
       return false if text.start_with?('\\\\', '//')
 
       scheme = text[/\A([A-Za-z][A-Za-z0-9+.\-]*):/n, 1]
       scheme.nil? || SAFE_URI_SCHEMES.include?(scheme.downcase)
-    rescue EncodingError
-      false
+    end
+
+    # +offset+ points at /OpenAction or /AA. A URI action they reach (directly, through indirect
+    # objects or /Next chains) opens a link with no click, which phishing PDFs rely on.
+    def check_auto_action!(buffer, offset)
+      name = buffer.byteslice(offset, OVERLAP)[NAME_TOKEN]
+      value_offset = offset + name.bytesize
+      return unless buffer.byteslice(value_offset, OVERLAP).match?(ACTION_VALUE)
+
+      value = PdfObjectParser.new(buffer, value_offset).parse_value_at
+      follow_action!(value, decode_name(name) == '/AA' ? :triggers : :action, 0)
+    end
+
+    # :triggers is an /AA dictionary (event => action); :action an action, or a destination
+    # (an array, ignored) behind /OpenAction.
+    def follow_action!(value, kind, depth)
+      reject!(:pdf_unparsable, 'action chain too deep') if depth > MAX_ACTION_DEPTH
+      return resolve(value).each { |object| follow_action!(object, kind, depth + 1) } if value.is_a?(PdfObjectParser::Ref)
+      return unless value.is_a?(Hash)
+
+      if kind == :triggers
+        value.each_value { |action| follow_action!(action, :action, depth + 1) }
+      else
+        reject!(:pdf_auto_action, 'opens a link when the document or a page opens') if value['S'] == PdfObjectParser::Name.new('URI')
+        following = value['Next']
+        (following.is_a?(Array) ? following : [following]).each { |action| follow_action!(action, :action, depth + 1) }
+      end
+    end
+
+    # Every definition of the object found in the file; a reader picks one through the xref
+    # table, so all of them are checked.
+    # ponytail: objects stored inside object streams are not resolved; resolving needs the
+    # xref (stream) walk, after which this index can go.
+    def resolve(ref)
+      @objects.fetch([ref.number, ref.generation], []).map do |offset|
+        PdfObjectParser.new(read_at(@file, offset, VALUE_WINDOW), 0).parse_object.value
+      end
     end
 
     def read_at(file, offset, length)

@@ -49,12 +49,11 @@ class UploadInspectorTest < Minitest::Test
   end
 
   def test_rejects_unverifiable_type_unless_opted_in
-    ole = "\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1".b + ("\x00".b * 600)
-    path = write_file('a.ppt', ole)
-    detected = Marcel::MimeType.for(Pathname(path), name: 'a.ppt')
-    assert_equal 'application/vnd.ms-powerpoint', detected
-    assert_rejected check(path, 'a.ppt', allowed_types: [detected]), :unverifiable_type
-    assert check(path, 'a.ppt', allow_unverifiable: [detected]).safe?
+    path = write_file('a.psd', "8BPS\x00\x01".b + ("\x00".b * 600))
+    detected = Marcel::MimeType.for(Pathname(path), name: 'a.psd')
+    assert_equal 'image/vnd.adobe.photoshop', detected
+    assert_rejected check(path, 'a.psd', allowed_types: [detected]), :unverifiable_type
+    assert check(path, 'a.psd', allow_unverifiable: [detected]).safe?
   end
 
   def test_unknown_policy_option_raises
@@ -265,6 +264,51 @@ class UploadInspectorTest < Minitest::Test
     result = check(bad, 'b.pdf', sandbox: true)
     assert_rejected result, :pdf_active_content
     assert_equal 'application/pdf', result.detected_type
+  end
+
+  # --- links -------------------------------------------------------------------
+
+  def link_pdf(*uris)
+    pdf_bytes(*uris.map { |uri| "<< /Type /Annot /Subtype /Link /A << /S /URI /URI (#{uri}) >> >>" })
+  end
+
+  def test_links_survive_the_sandbox
+    path = write_file('a.pdf', link_pdf('https://example.com/a', 'mailto:x@example.com', 'https://example.com/a'))
+    result = check(path, 'a.pdf', sandbox: true)
+    assert result.safe?, result.detail
+    assert_equal ['https://example.com/a', 'mailto:x@example.com'], result.links
+  end
+
+  def test_links_are_kept_on_rejection_and_in_report_mode
+    path = write_file('a.pdf', pdf_bytes('<< /OpenAction << /S /URI /URI (https://example.com/x) >> >>'))
+    assert_equal ['https://example.com/x'], check(path, 'a.pdf', sandbox: true, mode: :report).links
+  end
+
+  def test_links_are_capped
+    path = write_file('a.pdf', link_pdf(*(1..150).map { |i| "https://example.com/#{i}" }))
+    assert_equal UploadInspector::LinkCollector::MAX_LINKS, check(path, 'a.pdf').links.size
+  end
+
+  def test_links_from_docx_svg_and_zip_members
+    docx = docx_bytes(document_rels: rels('Id="r1" Type="x/hyperlink" Target="https://example.com/d" TargetMode="External"'))
+    assert_equal ['https://example.com/d'], check(write_file('a.docx', docx), 'a.docx').links
+
+    svg = '<svg xmlns="http://www.w3.org/2000/svg"><a href="https://example.com/s"><text>x</text></a></svg>'
+    assert_equal ['https://example.com/s'], check(write_file('a.svg', svg), 'a.svg', allowed_types: ['image/svg+xml']).links
+
+    zip = zip_bytes('a.pdf' => link_pdf('https://example.com/1'), 'b.pdf' => link_pdf('https://example.com/2'))
+    assert_equal %w[https://example.com/1 https://example.com/2], check(write_file('a.zip', zip), 'a.zip').links
+  end
+
+  def test_pdf_links_policy_is_validated
+    assert_raises(ArgumentError) { UploadInspector::Policy.new(pdf_links: :maybe) }
+    assert_equal :reject, UploadInspector::Policy.new(pdf_links: 'reject').pdf_links
+    assert_rejected check(write_file('a.pdf', link_pdf('https://example.com')), 'a.pdf', sandbox: true, pdf_links: :reject), :pdf_link
+  end
+
+  def test_legacy_office_and_rtf_have_messages
+    assert_equal 'must be saved as .docx, .xlsx or .pptx', UploadInspector::Result.reject(:legacy_office).message
+    assert_equal 'is password-protected', UploadInspector::Result.reject(:office_encrypted).message
   end
 
   def test_sandbox_rejects_when_memory_limit_is_hit

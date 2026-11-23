@@ -13,6 +13,7 @@ module UploadInspector
   # DDE/OLE links, Power Query). Patterns run on entity-decoded text, as Office reads it.
   class OoxmlInspector
     include Rejectable
+    include LinkCollector
 
     SEGMENT = '[A-Za-z0-9_\-.]'
     ALLOWED_PARTS = [
@@ -61,9 +62,10 @@ module UploadInspector
     DATA_MASHUP = %r{<(?:[\w.\-]+:)?DataMashup\b|schemas\.microsoft\.com/DataMashup}i # Power Query package
     SAFE_EXTERNAL_TARGET = /\A(?:https?|mailto):/i
 
-    def initialize(policy, zip_inspector)
+    def initialize(policy, zip_inspector, links: [])
       @policy = policy
       @zip_inspector = zip_inspector
+      @links = links
     end
 
     def verify!(entries)
@@ -177,6 +179,7 @@ module UploadInspector
       if external && !(kind == 'hyperlink' && target.match?(SAFE_EXTERNAL_TARGET))
         reject!(:ooxml_external_relationship, "#{name}: #{kind} -> #{target}")
       end
+      add_link(target) if external
       reject!(:ooxml_forbidden_relationship, "#{name}: #{kind}") unless kind.match?(ALLOWED_RELATIONSHIPS)
     end
   end

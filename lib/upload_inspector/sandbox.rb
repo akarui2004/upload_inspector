@@ -98,7 +98,8 @@ module UploadInspector
     def parse(output)
       data = JSON.parse(output, symbolize_names: true)
       Result.new(safe: data.fetch(:safe) == true, reason: data[:reason]&.to_sym,
-                 detail: data[:detail], detected_type: data[:detected_type])
+                 detail: data[:detail], detected_type: data[:detected_type],
+                 links: Array(data[:links]).grep(String))
     rescue JSON::ParserError, KeyError
       Result.reject(:inspection_failed, 'unreadable sandbox output')
     end

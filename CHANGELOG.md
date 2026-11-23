@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.8.0
+
+- Legacy Office (`.doc/.xls/.ppt/.msg`) is rejected as `:legacy_office` with a "save as
+  .docx/.xlsx/.pptx" message (previously `:type_not_allowed`). With the type in `allowed_types`, the Compound File is
+  read in pure Ruby and VBA/XLM macros, OLE objects, ActiveX, mail attachments, encryption, Word
+  DDE/INCLUDE fields, Excel external links and PowerPoint program actions are rejected (`:ole_*`).
+- Macro-enabled OOXML (`.docm/.xlsm/.pptm/.xlsb/.dotm`...) is rejected as `:office_macro_enabled`;
+  password-protected `.docx/.xlsx/.pptx` (and `.doc/.xls/.ppt`, ODF) as `:office_encrypted`.
+  OOXML templates (`.dotx/.potx/.xltx`) are verified like documents.
+- RTF (`application/rtf`): tokenizer rejecting OLE objects, `\datastore`, remote templates,
+  dangerous fields and `file:` hyperlinks (`:rtf_*`).
+- OpenDocument (`.odt/.ods/.odp`): allowlist of parts, rejects macros, scripts, OLE objects,
+  DDE, encrypted parts and links leaving the package (`:odf_*`).
+- PDF: a link opened with no click (`/OpenAction` or `/AA` reaching a URI action) is rejected as
+  `:pdf_auto_action`; `pdf_links: :reject` rejects every link (`:pdf_link`).
+- `Result#links`: web/mail links found in PDF, OOXML, OpenDocument, RTF and SVG files (max 100),
+  carried through the sandbox, to check against a URL reputation service.
+
 ## 0.7.2
 
 - Rewritten code to clean up.

@@ -9,10 +9,11 @@ module UploadInspector
   #                      PNG / JPEG / GIF / WebP, SVG).
   # allow_unverifiable - MIME types accepted on real-type + extension match only, because their
   #                      content cannot be inspected (e.g. image/vnd.adobe.photoshop). Opt-in risk.
+  # pdf_links          - :allow (default) or :reject PDFs containing any link (URI action).
   Policy = Data.define(
     :allowed_types, :allow_unverifiable, :max_file_size,
     :max_zip_entries, :max_zip_entry_size, :max_zip_total_size, :max_compression_ratio,
-    :max_inflate_size, :max_image_pixels, :allow_csv_formulas, :allow_text_markup, :timeout, :memory_limit, :cpu_limit
+    :max_inflate_size, :max_image_pixels, :allow_csv_formulas, :allow_text_markup, :pdf_links, :timeout, :memory_limit, :cpu_limit
   )
 
   class Policy
@@ -28,6 +29,7 @@ module UploadInspector
       max_image_pixels: 100_000_000, # declared width x height of an image or animation frame
       allow_csv_formulas: false, # true accepts CSV/TSV cells a spreadsheet would run as formulas
       allow_text_markup: false, # true accepts HTML/SVG/script tags in text files (e.g. code snippets)
+      pdf_links: :allow,
       timeout: 60, # seconds, wall clock (sandbox only)
       memory_limit: 1024 * MEGABYTE, # RLIMIT_DATA for the sandbox child; nil disables
       cpu_limit: 60, # seconds, RLIMIT_CPU for the sandbox child; nil disables
@@ -40,6 +42,10 @@ module UploadInspector
       merged = DEFAULTS.merge(options)
       # The sandbox deadline needs a real number; nil here used to raise TypeError mid-check.
       raise ArgumentError, 'timeout must be a positive number' unless merged[:timeout].is_a?(Numeric) && merged[:timeout].positive?
+
+      # Symbols arrive as strings from the sandbox's JSON.
+      merged[:pdf_links] = merged[:pdf_links].to_s.to_sym
+      raise ArgumentError, 'pdf_links must be :allow or :reject' unless %i[allow reject].include?(merged[:pdf_links])
 
       merged[:allowed_types] = Array(merged[:allowed_types]).map(&:to_s).freeze
       merged[:allow_unverifiable] = Array(merged[:allow_unverifiable]).map(&:to_s).freeze
