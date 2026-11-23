@@ -39,8 +39,9 @@ module UploadInspector
       dde-source dde-connection-decl dde-connection-decls dde-link dde-links
     ].freeze
     RUNNING_ACTIONS = %w[execute verb].freeze # presentation:action values that run a program or OLE verb
-    # DDE and web-fetching functions, and references into another document ('file:...'#$Sheet.A1).
-    DANGEROUS_FORMULA = /\b(?:DDE|WEBSERVICE|FILTERXML)\s*\(|'[^']*'\s*#/i
+    # DDE and web-fetching functions, INDIRECT (builds any reference, external ones included, from
+    # text), references into another document ('file:...'#$Sheet.A1), file: and UNC paths.
+    DANGEROUS_FORMULA = /\b(?:DDE|WEBSERVICE|FILTERXML|INDIRECT(?:_XL)?)\s*\(|'[^']*'\s*#|file:|\\\\/i
     WEB_LINK = %r{\A(?:https?://|mailto:)}i
     LINK_WITH_SCHEME = /\A[A-Za-z][A-Za-z0-9+.\-]*:/n
 

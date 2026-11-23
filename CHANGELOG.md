@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.8.1
+
+Security fixes for checks added in 0.8.0; upgrade if you allow legacy Office, OpenDocument or rely
+on `:pdf_auto_action`.
+
+- Legacy Office: stream names are compared case-insensitively, as Office reads them. A
+  `workbook` stream with an Excel 4.0 macro sheet was not inspected. A compound file holding no
+  Office stream is now `application/x-ole-storage` whatever its name.
+- OpenDocument: links climbing out of the package mid-path, percent-encoded or with backslashes
+  (`Pictures/../../x`, `%2e%2e/x`, `..\x`) are rejected. Formulas using `WEBSERVICE`,
+  `FILTERXML`, `INDIRECT`, UNC paths or references into other documents (`'https://...'#`) are
+  rejected as `:odf_dangerous_formula`.
+- PDF: automatic actions stored in compressed object streams are resolved, so an `/OpenAction`
+  pointing to a URI action there is rejected. An action reference that may sit in an object
+  stream that cannot be indexed (uncompressed, indirect or malformed `/First`/`/N`) is rejected
+  as `:pdf_unparsable`. Each reference is followed once, at most 1000 objects.
+
 ## 0.8.0
 
 - Legacy Office (`.doc/.xls/.ppt/.msg`) is rejected as `:legacy_office` with a "save as

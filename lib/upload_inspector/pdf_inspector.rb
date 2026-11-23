@@ -178,12 +178,18 @@ module UploadInspector
     end
 
     # An object stream starts with /N pairs "object-number offset", offsets counted from /First.
+    # A header that cannot be read exactly leaves the stream unindexed (see resolve).
     def index_stream_objects(data, dictionary)
-      first = dictionary['First'].to_s.to_i
-      count = dictionary['N'].to_s.to_i
-      data.byteslice(0, first).to_s.scan(/\d+/n).map(&:to_i).each_slice(2).first(count).each do |number, offset|
-        @stream_objects[number] << [data, first + offset.to_i]
+      first, count = dictionary.values_at('First', 'N')
+      return @unindexed_object_stream = true unless [first, count].all? { |v| v.is_a?(String) && v.match?(/\A\d+\z/) }
+
+      first = first.to_i
+      pairs = data.byteslice(0, first).to_s.scan(/\d+/n).map(&:to_i).each_slice(2).to_a
+      if first > data.bytesize || pairs.size != count.to_i || pairs.any? { |_, offset| offset.nil? || first + offset >= data.bytesize }
+        return @unindexed_object_stream = true
       end
+
+      pairs.each { |number, offset| @stream_objects[number] << [data, first + offset] }
     end
 
     # +offset+ points at a /URI name; its value must be a web/mail link (or a name or dictionary
@@ -262,14 +268,16 @@ module UploadInspector
 
     # Every definition of the object, in the file or in a compressed object stream (always
     # generation 0); a reader picks one through the xref table, so all of them are checked. A
-    # missing object is null to readers, unless it may sit in an object stream we did not inflate.
+    # missing object is null to readers. Any object stream we could not index may hold another
+    # definition (even when a decoy one is found), so references are not followed then.
     def resolve(ref)
+      reject!(:pdf_unparsable, 'automatic action behind an object stream that cannot be indexed') if @unindexed_object_stream
+
       raw = @objects.fetch([ref.number, ref.generation], []).map do |offset|
         PdfObjectParser.new(read_at(@file, offset, VALUE_WINDOW), 0).parse_object.value
       end
       streamed = ref.generation.zero? ? @stream_objects.fetch(ref.number, []) : []
       objects = raw + streamed.map { |data, offset| PdfObjectParser.new(data, offset).parse_value_at }
-      reject!(:pdf_unparsable, 'action behind an uncompressed object stream') if objects.empty? && @unindexed_object_stream
       objects
     end
 
