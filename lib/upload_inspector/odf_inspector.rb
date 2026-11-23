@@ -39,9 +39,11 @@ module UploadInspector
       dde-source dde-connection-decl dde-connection-decls dde-link dde-links
     ].freeze
     RUNNING_ACTIONS = %w[execute verb].freeze # presentation:action values that run a program or OLE verb
-    DANGEROUS_FORMULA = /\bDDE\s*\(|file:/i
+    # DDE and web-fetching functions, INDIRECT (builds any reference, external ones included, from
+    # text), references into another document ('file:...'#$Sheet.A1), file: and UNC paths.
+    DANGEROUS_FORMULA = /\b(?:DDE|WEBSERVICE|FILTERXML|INDIRECT(?:_XL)?)\s*\(|'[^']*'\s*#|file:|\\\\/i
     WEB_LINK = %r{\A(?:https?://|mailto:)}i
-    LINK_WITH_SCHEME = %r{\A(?:[A-Za-z][A-Za-z0-9+.\-]*:|\\\\|//|/|\.\./)}n
+    LINK_WITH_SCHEME = /\A[A-Za-z][A-Za-z0-9+.\-]*:/n
 
     def initialize(policy, zip_inspector, links: [])
       @policy = policy
@@ -127,11 +129,15 @@ module UploadInspector
     end
 
     # Hyperlinks (<text:a>, <draw:a>) may leave the package for the web; nothing else may.
+    # Other targets must be relative paths that stay inside the package, read the way a lenient
+    # resolver would: percent-decoded, backslashes as slashes, no ".." segment anywhere.
     def check_href!(element, target, name)
       target = target.gsub(/[\x00-\x20\x7F]/n, '')
       return add_link(target) if element == 'a' && target.match?(WEB_LINK)
 
-      reject!(:odf_external_reference, "#{name}: #{target[0, 80]}") if target.match?(LINK_WITH_SCHEME)
+      path = target.gsub(/%(\h\h)/n) { Regexp.last_match(1).hex.chr }.tr('\\', '/')
+      escapes = path.match?(LINK_WITH_SCHEME) || path.start_with?('/') || path.split('/').include?('..')
+      reject!(:odf_external_reference, "#{name}: #{target[0, 80]}") if escapes
     end
   end
 end

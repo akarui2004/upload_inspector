@@ -10,6 +10,7 @@ module UploadInspector
     include Rejectable
 
     MAGIC = "\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1".b
+    TYPE = 'application/x-ole-storage'
     HEADER_SIZE = 512
     DIRECTORY_ENTRY_SIZE = 128
     END_OF_CHAIN = 0xFFFFFFFE

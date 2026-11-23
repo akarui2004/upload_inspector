@@ -55,6 +55,7 @@ module UploadInspector
     # /OpenAction is a destination array or stray bytes in binary data.
     ACTION_VALUE = /\A(?:[\0\t\n\f\r ]|%[^\r\n]*)*(?:<<|\d+[\0\t\n\f\r ]+\d+[\0\t\n\f\r ]+R)/n
     MAX_ACTION_DEPTH = 16
+    MAX_ACTION_NODES = 1_000 # objects visited while following automatic actions
     NAME_TOKEN = %r{\A/[^\0\t\n\f\r ()<>\[\]{}/%]*}n
     VALUE_END = /\A(?:[\0\t\n\f\r ]|%[^\r\n]*)*(?:>>|\]|\z)/n
 
@@ -69,8 +70,13 @@ module UploadInspector
         @file = file
         uris.each { |offset| check_uri!(read_at(file, offset, VALUE_WINDOW), 0) }
         inspected = []
+        @stream_objects = Hash.new { |hash, key| hash[key] = [] } # object number => [[stream data, offset]]
+        @stream_actions = [] # [stream data, offset] of /OpenAction and /AA inside object streams
         markers.each { |offset| inspect_marker!(file, offset, inspected) }
+        # Followed only once every object stream is indexed, so references into them resolve.
+        @visited = {}
         actions.each { |offset| check_auto_action!(read_at(file, offset, VALUE_WINDOW), 0) }
+        @stream_actions.each { |data, offset| check_auto_action!(data, offset) }
       end
     end
 
@@ -132,7 +138,11 @@ module UploadInspector
 
       inspected << (start + object.stream_start)
       reject!(:pdf_unparsable, 'comment or string in object stream dictionary') if object.has_text
-      inflate_and_scan!(file, start + object.stream_start) if compressed_object_stream?(object.value)
+      if compressed_object_stream?(object.value)
+        inflate_and_scan!(file, start + object.stream_start, object.value)
+      else
+        @unindexed_object_stream = true
+      end
     end
 
     # Only a single plain FlateDecode filter is accepted; anything else cannot be verified.
@@ -148,7 +158,7 @@ module UploadInspector
     end
 
     # Inflates fully (bounded by max_inflate_size) so keys and URI values are scanned whole.
-    def inflate_and_scan!(file, data_offset)
+    def inflate_and_scan!(file, data_offset, dictionary)
       file.seek(data_offset)
       inflater = Zlib::Inflate.new
       output = ''.b
@@ -159,11 +169,27 @@ module UploadInspector
       end
       scan_tokens!(output)
       output.scan(URI_PATTERN) { check_uri!(output, Regexp.last_match.begin(0)) }
-      output.scan(AUTO_ACTION_PATTERN) { check_auto_action!(output, Regexp.last_match.begin(0)) }
+      output.scan(AUTO_ACTION_PATTERN) { @stream_actions << [output, Regexp.last_match.begin(0)] }
+      index_stream_objects(output, dictionary)
     rescue Zlib::Error => e
       reject!(:pdf_unparsable, "object stream: #{e.message}")
     ensure
       inflater&.close
+    end
+
+    # An object stream starts with /N pairs "object-number offset", offsets counted from /First.
+    # A header that cannot be read exactly leaves the stream unindexed (see resolve).
+    def index_stream_objects(data, dictionary)
+      first, count = dictionary.values_at('First', 'N')
+      return @unindexed_object_stream = true unless [first, count].all? { |v| v.is_a?(String) && v.match?(/\A\d+\z/) }
+
+      first = first.to_i
+      pairs = data.byteslice(0, first).to_s.scan(/\d+/n).map(&:to_i).each_slice(2).to_a
+      if first > data.bytesize || pairs.size != count.to_i || pairs.any? { |_, offset| offset.nil? || first + offset >= data.bytesize }
+        return @unindexed_object_stream = true
+      end
+
+      pairs.each { |number, offset| @stream_objects[number] << [data, first + offset] }
     end
 
     # +offset+ points at a /URI name; its value must be a web/mail link (or a name or dictionary
@@ -222,7 +248,13 @@ module UploadInspector
     # (an array, ignored) behind /OpenAction.
     def follow_action!(value, kind, depth)
       reject!(:pdf_unparsable, 'action chain too deep') if depth > MAX_ACTION_DEPTH
-      return resolve(value).each { |object| follow_action!(object, kind, depth + 1) } if value.is_a?(PdfObjectParser::Ref)
+      if value.is_a?(PdfObjectParser::Ref)
+        return if @visited[[value, kind]] # shared or cyclic references are checked once
+
+        @visited[[value, kind]] = true
+        reject!(:pdf_unparsable, 'too many objects behind automatic actions') if @visited.size > MAX_ACTION_NODES
+        return resolve(value).each { |object| follow_action!(object, kind, depth + 1) }
+      end
       return unless value.is_a?(Hash)
 
       if kind == :triggers
@@ -234,14 +266,19 @@ module UploadInspector
       end
     end
 
-    # Every definition of the object found in the file; a reader picks one through the xref
-    # table, so all of them are checked.
-    # ponytail: objects stored inside object streams are not resolved; resolving needs the
-    # xref (stream) walk, after which this index can go.
+    # Every definition of the object, in the file or in a compressed object stream (always
+    # generation 0); a reader picks one through the xref table, so all of them are checked. A
+    # missing object is null to readers. Any object stream we could not index may hold another
+    # definition (even when a decoy one is found), so references are not followed then.
     def resolve(ref)
-      @objects.fetch([ref.number, ref.generation], []).map do |offset|
+      reject!(:pdf_unparsable, 'automatic action behind an object stream that cannot be indexed') if @unindexed_object_stream
+
+      raw = @objects.fetch([ref.number, ref.generation], []).map do |offset|
         PdfObjectParser.new(read_at(@file, offset, VALUE_WINDOW), 0).parse_object.value
       end
+      streamed = ref.generation.zero? ? @stream_objects.fetch(ref.number, []) : []
+      objects = raw + streamed.map { |data, offset| PdfObjectParser.new(data, offset).parse_value_at }
+      objects
     end
 
     def read_at(file, offset, length)

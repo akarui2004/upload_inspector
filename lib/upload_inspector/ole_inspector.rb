@@ -15,13 +15,14 @@ module UploadInspector
     POWERPOINT = 'application/vnd.ms-powerpoint'
     OUTLOOK = 'application/vnd.ms-outlook'
     TYPES = [WORD, EXCEL, POWERPOINT, OUTLOOK].freeze
-    MAIN_STREAMS = { 'WordDocument' => WORD, 'Workbook' => EXCEL, 'Book' => EXCEL, 'PowerPoint Document' => POWERPOINT }.freeze
-    OUTLOOK_PROPERTY = /\A__substg1\.0_/
+    # Compound File names compare case-insensitively (MS-CFB), so do all lookups here.
+    MAIN_STREAMS = { 'worddocument' => WORD, 'workbook' => EXCEL, 'book' => EXCEL, 'powerpoint document' => POWERPOINT }.freeze
+    OUTLOOK_PROPERTY = /\A__substg1\.0_/i
 
     MACRO_ENTRY = /\A(?:Macros|_VBA_PROJECT|_VBA_PROJECT_CUR|VBA)\z/i
     # Word/Excel embedded objects, OLE native data, Outlook attachments.
     EMBEDDED_ENTRY = /\A(?:ObjectPool|\u0001Ole10Native|MBD\h{8}|__attach_version1\.0_#\h{8})\z/i
-    ENCRYPTED_ENTRY = /\A(?:EncryptionInfo|EncryptedPackage|EncryptedSummary)\z/
+    ENCRYPTED_ENTRY = /\A(?:EncryptionInfo|EncryptedPackage|EncryptedSummary)\z/i
     DANGEROUS_FIELD = /\x13[\s"]*(DDEAUTO|DDE|INCLUDETEXT|INCLUDEPICTURE|INCLUDE|IMPORT|LINK|QUOTE|DATABASE|MACROBUTTON)(?![A-Z])/ni
 
     WORD_ENCRYPTED_FLAG = 0x0100 # FIB fEncrypted
@@ -37,11 +38,12 @@ module UploadInspector
     PPT_CRYPT_SESSION = 0x2F14
     PPT_RUNNING_ACTIONS = { 1 => 'macro', 2 => 'run program', 5 => 'OLE verb' }.freeze
 
-    # Real type from the directory, or nil for compound files that are not Office documents.
+    # Real type from the directory, or nil for compound files that are not Office documents
+    # (the caller must not fall back to the name: a .xls without a workbook is not a workbook).
     # Encrypted OOXML is a compound file too and is rejected here, whatever its type.
     def self.detect_type(reader)
-      names = reader.entries.map(&:name)
-      raise Rejection.new(:office_encrypted, 'EncryptedPackage') if names.include?('EncryptedPackage')
+      names = reader.entries.map { |entry| entry.name.downcase }
+      raise Rejection.new(:office_encrypted, 'EncryptedPackage') if names.include?('encryptedpackage')
 
       MAIN_STREAMS.each { |stream, type| return type if names.include?(stream) }
       OUTLOOK if names.any? { |name| name.match?(OUTLOOK_PROPERTY) }
@@ -56,10 +58,10 @@ module UploadInspector
       reader.entries.each do |entry|
         next unless entry.stream?
 
-        case entry.name
-        when 'WordDocument' then check_word!(read(reader, entry))
-        when 'Workbook', 'Book' then check_workbook!(read(reader, entry))
-        when 'PowerPoint Document' then check_presentation!(read(reader, entry))
+        case entry.name.downcase
+        when 'worddocument' then check_word!(read(reader, entry))
+        when 'workbook', 'book' then check_workbook!(read(reader, entry))
+        when 'powerpoint document' then check_presentation!(read(reader, entry))
         end
       end
     end
