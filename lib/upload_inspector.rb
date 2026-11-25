@@ -1,7 +1,9 @@
 # frozen_string_literal: true
 
+require 'fileutils'
 require 'json'
 require 'marcel'
+require 'tmpdir'
 require 'zip'
 require 'zlib'
 
@@ -26,6 +28,7 @@ require_relative 'upload_inspector/ole_inspector'
 require_relative 'upload_inspector/rtf_inspector'
 require_relative 'upload_inspector/zip_inspector'
 require_relative 'upload_inspector/inspector'
+require_relative 'upload_inspector/sanitizer'
 require_relative 'upload_inspector/sandbox'
 require_relative 'upload_inspector/source'
 require_relative 'upload_inspector/s3'
@@ -73,6 +76,44 @@ module UploadInspector
     observe(mode) { |payload| S3.check(client:, bucket:, key:, filename:, version_id:, sandbox:, policy:, payload:) }
   end
 
+  # Checks an upload, then writes a cleaned copy to +to+ holding only the parts known to be safe
+  # (content disarm and reconstruction): image metadata such as EXIF/GPS, comments and unknown
+  # chunks are dropped, with any payload hidden in them. The copy is checked again before it is
+  # moved to +to+; when the upload or the copy is rejected, nothing is written.
+  #
+  #   result = UploadInspector.sanitize(params[:file], to: '/tmp/clean.jpg', allowed_types: %w[image/jpeg])
+  #   store(result.sanitized_path) if result.safe?
+  #
+  # +keep_orientation+ keeps the EXIF Orientation tag of a JPEG (and nothing else from EXIF),
+  # so the image is not shown rotated. +neutralize_csv_formulas+ accepts CSV/TSV formula cells
+  # and writes them with a leading ' so spreadsheets show them as text. +reencode+ decodes raster
+  # images (PNG, JPEG, GIF, WebP, HEIC, AVIF) with libvips and encodes new ones, which also drops
+  # anything hidden in pixel data; it needs the ruby-vips gem and raises ArgumentError without it.
+  # Other keywords are the same as for check, without +mode+.
+  # Types that cannot be cleaned are rejected with :sanitize_unsupported.
+  #
+  # With ActiveSupport loaded, each call publishes "sanitize.upload_inspector" with payload
+  # { reason:, detected_type:, filename_ext:, size: }.
+  def self.sanitize(source, to:, filename: nil, sandbox: true, keep_orientation: false, neutralize_csv_formulas: false,
+                    reencode: false, **policy_options)
+    policy = Policy.new(**policy_options)
+    Sanitizers::VipsReencoder.require_vips! if reencode # fail now, not as a rejection
+    options = { keep_orientation:, neutralize_csv_formulas:, reencode: }
+    payload = {}
+    instrument('sanitize.upload_inspector', payload) do
+      result = Dir.mktmpdir('upload_inspector') do |workdir|
+        output = File.join(workdir, 'sanitized')
+        checked = inspect_source(source, filename:, sandbox:, policy:, payload:, sanitize: { output:, **options })
+        next checked unless checked.safe?
+
+        FileUtils.mv(output, to)
+        checked.with(sanitized_path: File.path(to))
+      end
+      payload.merge!(reason: result.reason, detected_type: result.detected_type)
+      result
+    end
+  end
+
   # Name safe to store and serve for an upload; see Filename.sanitize.
   #
   #   UploadInspector.safe_filename('../x.php.jpg', detected_type: result.detected_type) # => "x_php.jpg"
@@ -99,7 +140,8 @@ module UploadInspector
 
   # Inspection without mode handling or instrumentation (see check). Fills +payload+.
   # @api private
-  def self.inspect_source(source, filename:, sandbox:, policy:, payload: {})
+  # With +sanitize+ (Sanitizer options, output: included) the file is also rewritten.
+  def self.inspect_source(source, filename:, sandbox:, policy:, payload: {}, sanitize: nil)
     # Active Storage knows the size up front: reject before downloading the blob to disk.
     size = source.respond_to?(:byte_size) ? source.byte_size.to_i : 0
     return Result.reject(:too_large, "#{size} bytes") if size > policy.max_file_size
@@ -110,10 +152,18 @@ module UploadInspector
       # which cannot carry a name that is not valid UTF-8.
       unsafe_name = Filename.unsafe_reason(name)
       next Result.reject(:filename_unsafe, unsafe_name) if unsafe_name
-      next Sandbox.run(path, filename: name, policy:) if sandbox
+      next Sandbox.run(path, filename: name, policy:, sanitize:) if sandbox
 
-      Inspector.new(policy).call(path, filename: name)
+      inspect_path(path, filename: name, policy:, sanitize:)
     end
+  end
+
+  # Inspects (and with +sanitize+, rewrites) a local file, in this process.
+  # @api private
+  def self.inspect_path(path, filename:, policy:, sanitize: nil)
+    return Inspector.new(policy).call(path, filename:) unless sanitize
+
+    Sanitizer.new(policy, **sanitize).call(path, filename:)
   end
 
   # Applies +mode+ to the Result of the block and publishes the check event.
@@ -122,7 +172,7 @@ module UploadInspector
     raise ArgumentError, "mode must be one of: #{MODES.join(', ')}" unless MODES.include?(mode)
 
     payload = { mode: }
-    instrument(payload) do
+    instrument('check.upload_inspector', payload) do
       result = yield payload
       result = result.reported if mode == :report
       payload.merge!(reason: result.reason, would_reject: result.would_reject, detected_type: result.detected_type)
@@ -131,10 +181,10 @@ module UploadInspector
   end
   private_class_method :observe
 
-  def self.instrument(payload, &)
+  def self.instrument(event, payload, &)
     return yield unless defined?(ActiveSupport::Notifications)
 
-    ActiveSupport::Notifications.instrument('check.upload_inspector', payload, &)
+    ActiveSupport::Notifications.instrument(event, payload, &)
   end
   private_class_method :instrument
 end

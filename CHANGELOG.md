@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.9.0
+
+- `UploadInspector.sanitize(source, to:, ...)`: content disarm and reconstruction. Checks the
+  upload, writes a cleaned copy holding only the parts known to be safe, checks the copy again and
+  moves it to `to:` (`Result#sanitized_path`); nothing is written when either check rejects.
+  Runs in the sandbox like `check`.
+  - PNG, JPEG, GIF, WebP: metadata (EXIF with GPS, XMP), comments, unknown chunks and extra MPF
+    images are dropped; image data, color profiles and animation are kept.
+    `keep_orientation: true` keeps the JPEG Orientation tag.
+  - HEIC, HEIF, AVIF, MP4, QuickTime: unknown top-level boxes, user data and metadata in `moov`
+    and its tracks, and Exif/XMP items are zero-filled in place (no offset moves) or removed at
+    the end of the file.
+  - SVG: rebuilt from an allowlist of elements and attributes (SMIL animation included), without
+    comments, processing instructions or metadata, entities normalized, UTF-8.
+  - CSV/TSV/TXT: copied; `neutralize_csv_formulas: true` writes formula cells with a leading `'`.
+  - `reencode: true`: decode and encode raster images with libvips (optional `ruby-vips` gem; only
+    this option raises `ArgumentError` without it).
+  - Other types are rejected as `:sanitize_unsupported`.
+- `Result#sanitized_path` (nil except for a successful `sanitize`).
+- With ActiveSupport loaded, `sanitize` publishes `sanitize.upload_inspector`.
+
 ## 0.8.1
 
 Security fixes for checks added in 0.8.0; upgrade if you allow legacy Office, OpenDocument or rely

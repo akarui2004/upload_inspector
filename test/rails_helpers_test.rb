@@ -119,4 +119,14 @@ class RailsHelpersTest < Minitest::Test
   ensure
     ActiveSupport::Notifications.unsubscribe(subscriber)
   end
+
+  def test_sanitize_publishes_its_own_event
+    events = []
+    subscriber = ActiveSupport::Notifications.subscribe('sanitize.upload_inspector') { events << _1.payload }
+    UploadInspector.sanitize(write_file('upload', clean_pdf), filename: 'a.pdf', to: tmp_path('clean.pdf'), sandbox: false)
+    assert_equal({ filename_ext: '.pdf', size: clean_pdf.bytesize, reason: :sanitize_unsupported,
+                   detected_type: 'application/pdf', }, events.last)
+  ensure
+    ActiveSupport::Notifications.unsubscribe(subscriber)
+  end
 end

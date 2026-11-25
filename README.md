@@ -1,12 +1,27 @@
 # upload_inspector
 
-Fail-closed structural inspection of untrusted uploaded files for any Ruby or Rails app.
+Fail-closed structural inspection of untrusted uploaded files for any Ruby or Rails app, and
+**content disarm and reconstruction**: clean copies of uploads with metadata and hidden payloads removed.
 Checks a path, a Rails upload, an Active Storage attachment, any IO, or an S3 object uploaded
 through a presigned URL.
 
 A file is accepted only when its structure is proven to match a known-safe shape. Anything unknown,
 unparsable, encrypted, oversized, or erroring is rejected. Pure Ruby (`marcel`, `rubyzip`), no AV engine,
-no native parsers, nothing is rendered or executed.
+no native parsers, nothing is rendered or executed (libvips only for the optional re-encode).
+
+> **New in 0.9: `UploadInspector.sanitize`.** Writes a clean copy that keeps only the parts known
+> to be safe: EXIF with GPS location, XMP, comments, unknown chunks and payloads hidden in them
+> (a `<?php` web shell in a JPEG comment, a zip in an MP4 box) are removed from PNG, JPEG, GIF,
+> WebP, HEIC, AVIF, MP4 and QuickTime; SVG is rebuilt from an allowlist; CSV formulas can be
+> neutralized; `reencode: true` re-encodes images through libvips. The copy is checked again
+> before it is written.
+>
+> ```ruby
+> result = UploadInspector.sanitize(params[:file], to: clean_path, allowed_types: UploadInspector::Presets::IMAGES)
+> store(result.sanitized_path) if result.safe?
+> ```
+>
+> See [Sanitizing uploads (CDR)](#sanitizing-uploads-cdr).
 
 > **Not an antivirus.** It blocks structural attack vectors: disguised executables, macros, PDF
 > JavaScript, OLE objects, remote templates, DDE, zip bombs, image polyglots, scripted SVG and
@@ -64,6 +79,7 @@ Requires Ruby >= 3.2.
 - [Presets](#presets)
 - [Shadow mode and instrumentation](#shadow-mode-and-instrumentation)
 - [Serving uploads safely](#serving-uploads-safely)
+- [Sanitizing uploads (CDR)](#sanitizing-uploads-cdr)
 - [Error messages](#error-messages)
 - [S3 (presigned URL uploads)](#s3-presigned-url-uploads)
 - [Protecting the server from large files](#protecting-the-server-from-large-files)
@@ -93,6 +109,7 @@ Every call returns a `Result` and never raises on a hostile file:
 | `detail` | technical hint for logs, not for end users |
 | `detected_type` | the real MIME type, e.g. `"application/pdf"` |
 | `would_reject` | in `mode: :report`, the reason the file would have been rejected (`nil` otherwise) |
+| `sanitized_path` | where `sanitize` wrote the cleaned file (`nil` otherwise), see [Sanitizing uploads](#sanitizing-uploads-cdr) |
 | `links` | web/mail links found in a PDF, Office, OpenDocument, RTF or SVG file (at most 100), e.g. to check them against Safe Browsing or URLhaus; also set on rejected files |
 
 Only types in `allowed_types` are accepted (default: PDF only). See [What it checks](#what-it-checks)
@@ -189,6 +206,8 @@ ActiveSupport::Notifications.subscribe("check.upload_inspector") do |event|
 end
 ```
 
+`sanitize` publishes `sanitize.upload_inspector` with `{ reason:, detected_type:, filename_ext:, size: }`.
+
 ### Serving uploads safely
 
 A checked file can still be dangerous if the app serves it so a browser renders it as a page.
@@ -220,6 +239,53 @@ For S3, set the headers on the presigned GET:
 s3_object.presigned_url(:get, response_content_disposition: "attachment; filename=\"#{safe_name}\"",
                               response_content_type: result.detected_type)
 ```
+
+### Sanitizing uploads (CDR)
+
+`check` accepts or rejects. `sanitize` checks the upload, writes a new file holding only the parts
+known to be safe (content disarm and reconstruction), checks that file again and only then moves
+it to `to:`. Payloads hidden where `check` does not look (a `<?php` in a JPEG comment, a zip in an
+MP4 `free` box) are gone, and so is private metadata such as GPS coordinates. When the upload or
+the cleaned file is rejected, nothing is written. It takes the same keywords as `check` (no `mode:`).
+
+```ruby
+result = UploadInspector.sanitize(params[:file], to: clean_path, allowed_types: UploadInspector::Presets::IMAGES)
+if result.safe?
+  store(result.sanitized_path) # == clean_path
+else
+  render json: { error: result.message }, status: :unprocessable_entity
+end
+```
+
+| Format | Kept | Dropped |
+|---|---|---|
+| PNG | IHDR, PLTE, IDAT (merged into one), IEND, tRNS, gAMA, cHRM, sRGB, iCCP, pHYs, APNG frames | text chunks, eXIf, unknown chunks |
+| JPEG | frame, tables, scans, JFIF APP0, ICC profile, Adobe APP14 (CMYK colors) | EXIF/XMP (APP1), comments, other APP segments, extra images (MPF: primary image kept) |
+| GIF | header, color tables, frames, frame control, loop count | comments, plain text, other application extensions (XMP) |
+| WebP | VP8, VP8L, VP8X (flags fixed), ALPH, ANIM, ANMF, ICCP | EXIF, XMP, unknown chunks |
+| HEIC / HEIF / AVIF / MP4 / QuickTime | the boxes needed to play the file | other top-level boxes (`free`, `skip`, `uuid`...), user data and metadata in `moov` and its tracks, Exif/XMP items: zero-filled in place so no offset moves, or removed at the end of the file |
+| SVG | allowlisted elements and attributes (shapes, text, gradients, patterns, masks, filters, `<style>`, `<a>`, `<title>`/`<desc>`, SMIL animation of kept attributes), re-escaped, UTF-8 | comments, processing instructions, DOCTYPE, `<metadata>`, unknown elements and attributes |
+| CSV / TSV / TXT | the text as is | nothing, unless `neutralize_csv_formulas: true` |
+
+Color profiles are kept (dropping them shifts the colors of wide-gamut photos) only when they
+are structurally valid ICC profiles of at most 1 MB; their tag data is copied as is.
+
+Other types (PDF, Office, zip...) are rejected as `:sanitize_unsupported`. Options:
+
+- `keep_orientation: true` keeps the JPEG EXIF Orientation tag (and nothing else from EXIF), so
+  photos are not shown rotated.
+- `neutralize_csv_formulas: true` accepts CSV/TSV formula cells and writes them with a leading
+  `'` (`=HYPERLINK(...)` → `'=HYPERLINK(...)`), so spreadsheets show them as text.
+- `reencode: true` decodes PNG, JPEG, GIF, WebP, HEIC and AVIF with libvips and encodes new
+  files: only the pixels survive, so this also removes data hidden in pixel or entropy-coded data.
+  Needs the [`ruby-vips`](https://github.com/libvips/ruby-vips) gem and libvips (with libheif
+  encoders for HEIC/AVIF), which this gem does not depend on; without them only `reencode: true`
+  raises `ArgumentError`. Metadata is stripped, colors are converted to sRGB, and with
+  `keep_orientation: true` the rotation is applied to the pixels. Every frame of an animation
+  counts toward `max_image_pixels`.
+
+Kept parts are copied byte for byte: pixel data and video samples are not decoded unless
+`reencode: true`, and data inside an MP4 `mdat` that no sample refers to is not removed.
 
 ### Error messages
 
@@ -308,7 +374,7 @@ to bound is disk and time:
 
 ## Sandbox
 
-By default (`sandbox: true`) inspection runs in a child Ruby process with CPU, memory (Linux) and
+By default (`sandbox: true`) inspection (and sanitizing) runs in a child Ruby process with CPU, memory (Linux) and
 wall-clock limits. A crash, hang or memory blow-up kills only the child and yields a rejection
 (`:timeout`, `:resource_limit`, `:inspection_failed`), so web/job workers are unaffected.
 The child's temp files live in a directory the parent removes, also when the child is killed.
@@ -324,7 +390,9 @@ docker run --rm -v "$PWD":/src:ro ruby:3.3 \
   bash -c 'cp -r /src /app && cd /app && rm -rf vendor .bundle && bundle install && bundle exec rake test'
 ```
 
-CI runs the suite on Ruby 3.2 / 3.3 / 3.4 against rubyzip 2.3 and 3.x. The Rails helper tests
+CI runs the suite on Ruby 3.2 / 3.3 / 3.4 against rubyzip 2.3 and 3.x, and the sanitize tests
+against real decoders (libvips, ImageMagick). Locally they are skipped without those tools; for
+`reencode` run `bundle config set --local with vips` (needs libvips). The Rails helper tests
 use `activemodel` / `activejob` from the Gemfile (development only).
 
 `test/sample_virus_malware.rb` is the hostile-sample corpus: every attack shape with its expected

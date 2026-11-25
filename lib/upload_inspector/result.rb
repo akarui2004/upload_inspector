@@ -5,9 +5,10 @@ module UploadInspector
   # +would_reject+ is set in report mode: the reason the file would have been rejected.
   # +links+ lists the web/mail URLs found in the file (PDF, Office, SVG, RTF), at most
   # LinkCollector::MAX_LINKS, e.g. to check them against a URL reputation service.
-  Result = Data.define(:safe, :reason, :detail, :detected_type, :would_reject, :links) do
-    def initialize(safe:, reason:, detail:, detected_type:, would_reject: nil, links: []) = super(
-      safe:, reason:, detail:, detected_type:, would_reject:, links: links.dup.freeze
+  # +sanitized_path+ is where UploadInspector.sanitize wrote the cleaned file (nil otherwise).
+  Result = Data.define(:safe, :reason, :detail, :detected_type, :would_reject, :links, :sanitized_path) do
+    def initialize(safe:, reason:, detail:, detected_type:, would_reject: nil, links: [], sanitized_path: nil) = super(
+      safe:, reason:, detail:, detected_type:, would_reject:, links: links.dup.freeze, sanitized_path:
     )
 
     def self.accept(detected_type, links: [])

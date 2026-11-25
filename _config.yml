@@ -1,6 +1,6 @@
 # GitHub Pages (Jekyll) renders README.md as the home page and the other .md files as pages.
 title: upload_inspector
-description: Fail-closed structural inspection of untrusted uploaded files for Ruby and Rails
+description: Sanitize (content disarm and reconstruction) and fail-closed inspection of untrusted uploads for Ruby and Rails
 theme: jekyll-theme-cayman
 plugins:
   - jekyll-optional-front-matter # render the .md files without front matter
