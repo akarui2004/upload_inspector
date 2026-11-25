@@ -30,6 +30,7 @@ module UploadInspector
       ole_macro: 'contains macros', odf_macro: 'contains macros',
       office_encrypted: 'is password-protected',
       pdf_link: 'contains links',
+      sanitize_unsupported: 'is a file type that cannot be cleaned',
       ole_too_large: 'is too large', rtf_too_large: 'is too large',
       image_malformed: DAMAGED, media_malformed: DAMAGED, pdf_unparsable: DAMAGED,
       zip_unparsable: DAMAGED, zip_empty: DAMAGED, svg_unparsable: DAMAGED, ooxml_malformed_xml: DAMAGED,

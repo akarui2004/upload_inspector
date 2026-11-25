@@ -21,15 +21,17 @@ module UploadInspector
 
     # The child's temp files (extracted zip members) live in a directory owned by the parent:
     # a child killed on timeout or a resource limit cannot clean up after itself.
-    def run(path, filename:, policy:)
-      Dir.mktmpdir('upload_inspector') { |workdir| run_child(path, filename, policy, workdir) }
+    # +sanitize+ (Sanitizer options) makes the child also write the cleaned file to its +output+.
+    def run(path, filename:, policy:, sanitize: nil)
+      Dir.mktmpdir('upload_inspector') { |workdir| run_child(path, filename, policy, sanitize, workdir) }
     rescue SystemCallError => e
       Result.reject(:sandbox_failed, e.message)
     end
 
-    def run_child(path, filename, policy, workdir)
+    def run_child(path, filename, policy, sanitize, workdir)
       reader, writer = IO.pipe
-      payload = JSON.generate(path: File.expand_path(path), filename: filename.to_s, policy: policy.to_h)
+      sanitize = sanitize&.merge(output: File.expand_path(sanitize.fetch(:output)))
+      payload = JSON.generate(path: File.expand_path(path), filename: filename.to_s, policy: policy.to_h, sanitize:)
       pid = Process.spawn({ 'TMPDIR' => workdir }, RbConfig.ruby, '-I', LIB_DIR, '-e', CHILD_SCRIPT, payload,
                           spawn_options(policy, writer))
       writer.close
@@ -43,7 +45,8 @@ module UploadInspector
     def child_main(payload)
       input = JSON.parse(payload, symbolize_names: true)
       policy = Policy.new(**input.fetch(:policy))
-      result = Inspector.new(policy).call(input.fetch(:path), filename: input.fetch(:filename))
+      result = UploadInspector.inspect_path(input.fetch(:path), filename: input.fetch(:filename),
+                                            policy:, sanitize: input[:sanitize])
       $stdout.write(JSON.generate(result.to_h))
     rescue NoMemoryError
       $stdout.write(JSON.generate(Result.reject(:resource_limit, 'memory limit').to_h))

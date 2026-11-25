@@ -34,4 +34,194 @@ class SanitizeTest < Minitest::Test
     assert_equal %i[header image trailer], walk('image/gif', S.gif).map(&:first)
     assert_equal [:riff, 'VP8L'], walk('image/webp', S.webp).map(&:first)
   end
+
+  # --- images ------------------------------------------------------------------------
+
+  P = S::INERT_SCRIPT
+
+  # Sanitizes +bytes+ named +name+; returns [result, output bytes or nil when nothing was written].
+  def sanitize(bytes, name, allowed_types: S::IMAGES, sandbox: false, **options)
+    to = tmp_path("clean-#{name}")
+    result = UploadInspector.sanitize(write_file(name, bytes), filename: name, to:, sandbox:, allowed_types:, **options)
+    [result, File.exist?(to) ? File.binread(to) : nil]
+  end
+
+  def assert_clean(result, output, name)
+    assert result.safe?, "#{result.reason}: #{result.detail}"
+    assert_equal tmp_path("clean-#{name}"), result.sanitized_path
+    refute_includes output, P
+    checked = UploadInspector.check(write_file("recheck-#{name}", output), filename: name, sandbox: false,
+                                                                           allowed_types: S::IMAGES)
+    assert checked.safe?, "#{checked.reason}: #{checked.detail}"
+  end
+
+  def sub_blocks(data) = data.b.bytes.each_slice(255).map { |slice| [slice.size, *slice].pack('C*') }.join + "\0".b
+
+  def test_png_keeps_image_chunks_and_drops_text_and_unknown_chunks
+    idat = Zlib::Deflate.deflate("\0\0\0\0")
+    head = S.png.byteslice(0, 33) # signature + IHDR
+    iccp = S.png_chunk('iCCP', "p\0\0xyz")
+    bytes = head + S.png_chunk('tEXt', "Comment\0#{P}") + S.png_chunk('zTXt', "c\0\0#{Zlib::Deflate.deflate(P)}") + iccp +
+            S.png_chunk('IDAT', idat.byteslice(0, 5)) + S.png_chunk('IDAT', idat.byteslice(5..)) +
+            S.png_chunk('eXIf', P) + S.png_chunk('prVt', P) + S.png_chunk('IEND', '')
+    result, output = sanitize(bytes, 'a.png')
+
+    assert_clean(result, output, 'a.png')
+    assert_equal head + iccp + S.png_chunk('IDAT', idat) + S.png_chunk('IEND', ''), output # IDATs merged, fresh CRC
+  end
+
+  def jpeg_segment(marker, payload) = [0xFF, marker, payload.bytesize + 2].pack('CCn') + payload.b
+
+  # Little-endian EXIF: Orientation 6 and a GPS IFD pointer, followed by the payload.
+  def exif(orientation = 6)
+    tiff = "II*\0".b + [8, 2].pack('Vv') + [0x0112, 3, 1, orientation, 0].pack('vvVvv') + [0x8825, 4, 1, 38].pack('vvVV') +
+           [0].pack('V') + P
+    jpeg_segment(0xE1, "Exif\0\0#{tiff}")
+  end
+
+  def hostile_jpeg
+    jpeg = S.jpeg
+    app0 = jpeg.byteslice(0, 20) # SOI + APP0 JFIF
+    rest = jpeg.byteslice(20..)
+    second = S.jpeg.sub("\xFF\xC0".b, jpeg_segment(0xFE, P) + "\xFF\xC0".b) # MPF image carrying the payload
+    [app0 + exif + jpeg_segment(0xFE, P) + jpeg_segment(0xED, P) + jpeg_segment(0xE2, "MPF\0#{P}") + "\xFF\xFF".b + rest + second,
+     app0, rest]
+  end
+
+  def test_jpeg_drops_exif_comments_other_app_segments_and_extra_images
+    bytes, app0, rest = hostile_jpeg
+    result, output = sanitize(bytes, 'a.jpg')
+
+    assert_clean(result, output, 'a.jpg')
+    assert_equal app0 + rest, output
+  end
+
+  def test_jpeg_keep_orientation_writes_a_minimal_exif
+    bytes, app0, rest = hostile_jpeg
+    result, output = sanitize(bytes, 'a.jpg', keep_orientation: true)
+
+    assert_clean(result, output, 'a.jpg')
+    exif = jpeg_segment(0xE1, "Exif\0\0MM\0*".b + [8, 1, 0x0112, 3, 1, 6, 0, 0].pack('NnnnNnnN'))
+    assert_equal app0 + exif + rest, output
+  end
+
+  def test_jpeg_keeps_icc_profile_and_adobe_segments
+    icc = jpeg_segment(0xE2, "ICC_PROFILE\0\x01\x01profile")
+    adobe = jpeg_segment(0xEE, "Adobe\0\x64\0\0\0\0\x01")
+    jpeg = S.jpeg
+    bytes = jpeg.byteslice(0, 20) + icc + adobe + jpeg.byteslice(20..)
+    result, output = sanitize(bytes, 'a.jpg')
+
+    assert result.safe?
+    assert_equal bytes, output
+  end
+
+  def test_jpeg_without_orientation_writes_no_exif
+    jpeg = S.jpeg
+    _, output = sanitize(jpeg.byteslice(0, 20) + jpeg_segment(0xE1, "Exif\0\0MM\0*\0\0\0\x08\0\0") + jpeg.byteslice(20..), 'a.jpg',
+                         keep_orientation: true)
+    assert_equal jpeg, output
+  end
+
+  def test_gif_keeps_frame_control_and_loop_and_drops_other_extensions
+    gif = S.gif
+    header = gif.byteslice(0, 19) # signature, screen descriptor, 2-color global table
+    control = "\x21\xF9\x04\x00\x0A\x00\x00\x00".b
+    loop_count = "\x21\xFF\x0BNETSCAPE2.0\x03\x01\x00\x00\x00".b
+    bytes = header + "\x21\xFE".b + sub_blocks(P) + control + loop_count +
+            "\x21\xFF\x0BNETSCAPE2.0\x03\x01\x00\x00".b + sub_blocks(P) + # loop extension with extra data
+            "\x21\xFF\x0BXMP DataXMP".b + sub_blocks(P) + "\x21\x01\x0C#{"\0" * 12}".b + sub_blocks(P) + gif.byteslice(19..)
+    result, output = sanitize(bytes, 'a.gif')
+
+    assert_clean(result, output, 'a.gif')
+    assert_equal header + control + loop_count + gif.byteslice(19..), output
+  end
+
+  def webp_chunk(fourcc, data)
+    chunk = fourcc.b + [data.bytesize].pack('V') + data.b
+    data.bytesize.odd? ? chunk + "\0".b : chunk
+  end
+
+  def riff(*chunks)
+    body = chunks.join
+    'RIFF'.b + [body.bytesize + 4].pack('V') + 'WEBP'.b + body
+  end
+
+  def test_webp_drops_metadata_chunks_and_fixes_the_header
+    vp8l = webp_chunk('VP8L', "\x2F\0\0\0\0\0")
+    iccp = webp_chunk('ICCP', 'profile')
+    vp8x = ->(flags) { webp_chunk('VP8X', [flags].pack('C') + ("\0" * 9)) } # 1x1 canvas
+    bytes = riff(vp8x[0x2C], iccp, vp8l, webp_chunk('EXIF', P), webp_chunk('XMP ', P), webp_chunk('ABCD', P))
+    result, output = sanitize(bytes, 'a.webp')
+
+    assert_clean(result, output, 'a.webp')
+    assert_equal riff(vp8x[0x20], iccp, vp8l), output
+  end
+
+  def test_unsafe_upload_writes_nothing
+    result, output = sanitize(S.png + P, 'a.png')
+
+    assert_equal :image_trailing_data, result.reason
+    assert_nil result.sanitized_path
+    assert_nil output
+  end
+
+  def test_type_without_a_rewriter_is_rejected_and_writes_nothing
+    result, output = sanitize(clean_pdf, 'a.pdf', allowed_types: ['application/pdf'])
+
+    assert_equal :sanitize_unsupported, result.reason
+    assert_equal 'cannot be cleaned', result.message.delete_prefix('is a file type that ')
+    assert_nil output
+  end
+
+  def test_sanitize_runs_in_the_sandbox
+    bytes, app0, rest = hostile_jpeg
+    result, output = sanitize(bytes, 'a.jpg', sandbox: true)
+
+    assert result.safe?, result.detail
+    assert_equal app0 + rest, output
+  end
+
+  def test_sanitize_rejects_unknown_options
+    assert_raises(ArgumentError) { sanitize(S.png, 'a.png', mode: :report) }
+  end
+
+  # Extended WebP: VP8X declaring EXIF, the original image chunks, then an EXIF chunk.
+  def with_webp_exif(simple, width, height)
+    canvas = [width - 1].pack('V').byteslice(0, 3) + [height - 1].pack('V').byteslice(0, 3)
+    riff(webp_chunk('VP8X', "\x08\0\0\0".b + canvas), simple.byteslice(12..), webp_chunk('EXIF', P))
+  end
+
+  # Real encoders and decoders: the cleaned file must still open (skipped without ImageMagick/libvips).
+  def test_real_images_still_decode_after_sanitizing
+    skip 'ImageMagick not installed' unless system('convert -version', out: File::NULL, err: File::NULL)
+
+    %w[png jpg gif webp].each do |ext|
+      source = tmp_path("real.#{ext}")
+      assert system('convert', '-size', '16x8', 'gradient:red-blue', '-set', 'comment', P, source, err: File::NULL), ext
+      bytes = File.binread(source)
+      bytes = with_webp_exif(bytes, 16, 8) if ext == 'webp' # ImageMagick writes no WebP metadata
+      assert_includes bytes, P, ext
+      result, output = sanitize(bytes, "real.#{ext}")
+      assert result.safe?, "#{ext}: #{result.reason} #{result.detail}"
+      refute_includes output, P, ext
+      assert_equal "16x8\n", IO.popen(['identify', '-format', '%wx%h\n', result.sanitized_path], err: File::NULL, &:read), ext
+      next unless system('vips --version', out: File::NULL, err: File::NULL)
+
+      assert system('vips', 'copy', result.sanitized_path, tmp_path("decoded-#{ext}.v"), out: File::NULL, err: File::NULL), ext
+    end
+  end
+
+  def test_real_jpeg_keeps_its_orientation
+    skip 'ImageMagick not installed' unless system('convert -version', out: File::NULL, err: File::NULL)
+
+    source = tmp_path('rotated.jpg')
+    assert system('convert', '-size', '16x8', 'gradient:red-blue', source, err: File::NULL)
+    real = File.binread(source)
+    result, output = sanitize(real.byteslice(0, 20) + exif(6) + real.byteslice(20..), 'rotated.jpg', keep_orientation: true)
+
+    assert result.safe?, result.detail
+    refute_includes output, P
+    assert_equal 'RightTop', IO.popen(['identify', '-format', '%[orientation]', result.sanitized_path], err: File::NULL, &:read)
+  end
 end

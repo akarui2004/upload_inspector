@@ -13,7 +13,8 @@ module UploadInspector
   # blocks tile the file in order, so a rewriter can copy the ones it keeps byte for byte:
   # - PNG:  :signature, then each chunk by type ("IHDR", "tEXt", ...), header and CRC included
   # - JPEG: each marker segment by marker byte (0xD8 SOI starts every image, 0xD9 EOI ends
-  #         it), fill bytes included, and :scan_data for the entropy-coded data after an SOS
+  #         it), :fill for 0xFF padding before a marker, :scan_data for the entropy-coded data
+  #         after an SOS
   # - GIF:  :header (with the global color table), :extension, :image, :trailer
   # - WebP: :riff (RIFF header), then each chunk by FourCC, padding included
   class ImageInspector
@@ -81,6 +82,10 @@ module UploadInspector
       loop do
         start = @io.pos
         marker = jpeg_marker
+        if @io.pos - 2 > start # fill bytes: a block of their own, so a segment is marker + length + data
+          emit(:fill, start, @io.pos - 2)
+          start = @io.pos - 2
+        end
         emit(marker, start) if marker == 0xD9 || JPEG_STANDALONE.include?(marker)
         break if marker == 0xD9
         next if JPEG_STANDALONE.include?(marker)
@@ -205,8 +210,8 @@ module UploadInspector
     end
 
     # Hands the block that ends at the current position to the caller's block, if any.
-    def emit(kind, start)
-      @block&.call(kind, start, @io.pos - start)
+    def emit(kind, start, finish = @io.pos)
+      @block&.call(kind, start, finish - start)
       nil
     end
 
