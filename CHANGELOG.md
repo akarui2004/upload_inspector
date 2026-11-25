@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.1
+
+- Gem description: rubygems.org cut it off at a literal `<?php` read as an HTML tag; it now
+  shows in full.
+
 ## 0.9.0
 
 - `UploadInspector.sanitize(source, to:, ...)`: content disarm and reconstruction. Checks the
