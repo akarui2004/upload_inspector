@@ -253,6 +253,29 @@ class SanitizeTest < Minitest::Test
     assert_nil output
   end
 
+  # Extents that consume no iloc bytes would let a tiny box loop billions of times.
+  def test_media_rejects_iloc_extents_without_size
+    infe = S.box('infe', [2, 0, 0, 2, 0].pack('CCnnn') + "Exif\0")
+    iloc = S.full_box('iloc', [0x0000, 1, 2, 0, 0xFFFF].pack('nnnnn'))
+    meta = S.full_box('meta', S.full_box('iinf', [1].pack('n') + infe) + iloc +
+                              S.box('iprp', S.box('ipco', S.full_box('ispe', [1, 1].pack('NN')))))
+    result, output = sanitize_media(S.ftyp('heic', 'mif1') + meta + S.box('mdat', ''), 'a.heic')
+
+    assert_equal [:media_malformed, 'iloc extent size'], [result.reason, result.detail]
+    assert_nil output
+  end
+
+  def test_media_rejects_idat_extents_past_idat
+    bytes = heif_with_exif_in_idat(1).sub([4, P.bytesize].pack('NN'), [4, P.bytesize + 9].pack('NN')) # into iprp
+    result, = sanitize_media(bytes, 'a.heic')
+    assert_equal [:media_malformed, 'metadata item outside its data'], [result.reason, result.detail]
+  end
+
+  def test_media_zeroes_repeated_extents_once
+    rewriter = UploadInspector::Sanitizers::IsoBmffRewriter.new(nil)
+    assert_equal [[0, 10], [20, 5]], rewriter.send(:merge, [[20, 5], [0, 10], [0, 10], [5, 3], [10, 0], [22, 1]])
+  end
+
   def test_media_without_metadata_items_is_copied
     bytes = heif_with_exif(exif_type: 'hvc1')
     assert_equal bytes, sanitize_media(bytes, 'a.heic').last
@@ -270,7 +293,9 @@ class SanitizeTest < Minitest::Test
       bytes = File.binread(source)
       result, output = sanitize_media(bytes + S.box('free', P), "real.#{ext}")
       assert result.safe?, "#{ext}: #{result.reason} #{result.detail}"
-      assert_equal bytes, output
+      assert_equal bytes.bytesize, output.bytesize, ext # trailing free box dropped, the rest zeroed in place
+      refute_includes output, P, ext
+      refute_includes output, "Exif\0\0".b, ext # libvips writes an Exif item: zeroed
       assert_equal "16\n", IO.popen(['vipsheader', '-f', 'width', result.sanitized_path], err: File::NULL, &:read), ext
     end
     skip 'libheif has no HEVC or AV1 encoder' if encoded.empty?

@@ -78,12 +78,23 @@ module UploadInspector
         return [] unless iinf && iloc
 
         types = item_types(iinf)
-        ids = types.filter_map { |id, (type, _)| id if METADATA_ITEM_TYPES.include?(type) }
+        ids = types.filter_map { |id, (type, _)| id if METADATA_ITEM_TYPES.include?(type) }.to_set
         return [] if ids.empty?
 
         renames = ids.map { |id| [types[id][1], 4, REMOVED_ITEM_TYPE] }
-        extents = item_extents(iloc, find['meta/idat'], ids)
-        renames + extents
+        renames + merge(item_extents(iloc, find['meta/idat'], ids))
+      end
+
+      # Overlapping or repeated extents are zeroed once: at most the file size is written.
+      def merge(ranges)
+        ranges.sort.each_with_object([]) do |(start, length), merged|
+          last = merged.last
+          if last && start <= last[0] + last[1]
+            last[1] = [last[1], start + length - last[0]].max
+          else
+            merged << [start, length]
+          end
+        end
       end
 
       # { item_ID => [item_type, offset of the type field] } from infe version 2 and 3 entries.
@@ -118,6 +129,8 @@ module UploadInspector
         base_offset_size = (sizes >> 4) & 0xF
         index_size = version.zero? ? 0 : sizes & 0xF
         id_size = version < 2 ? 2 : 4
+        # Every extent must consume bytes, so the payload bounds the number of iterations.
+        malformed!('iloc extent size') if (index_size + offset_size + length_size).zero?
 
         ranges = []
         take(id_size).times do
@@ -134,9 +147,13 @@ module UploadInspector
             unsupported!('metadata item in another file or item') if data_reference.positive? || method > 1
             unsupported!('metadata item running to the end of the file') if extent_length.zero?
             start = base + extent_offset
-            start += idat[1] + idat[3] if method == 1 # inside the idat box of meta
-            malformed!('metadata item outside the file') if method == 1 && !idat
-            malformed!('metadata item outside the file') if start + extent_length > @io.size
+            limit = @io.size
+            if method == 1 # inside the idat box of meta
+              malformed!('metadata item outside idat') unless idat
+              start += idat[1] + idat[3]
+              limit = idat[1] + idat[2]
+            end
+            malformed!('metadata item outside its data') if start + extent_length > limit
             ranges << [start, extent_length]
           end
         end
