@@ -45,4 +45,5 @@ jobs:
         with:
           ruby-version: '3.3'
           bundler-cache: true
-      - run: bundle exec ruby -Ilib -Itest test/sanitize_test.rb --verbose
+      # Every decoder is installed here, so a skipped cross-check is a failure.
+      - run: bundle exec ruby -Ilib -Itest test/sanitize_test.rb --verbose | tee sanitize.log && ! grep -q 'Skipped:' sanitize.log

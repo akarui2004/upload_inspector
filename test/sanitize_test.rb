@@ -192,6 +192,72 @@ class SanitizeTest < Minitest::Test
     refute_includes output, P
   end
 
+  def zero_free(payload) = S.box('free', "\0" * payload.bytesize)
+
+  # Phone videos keep their GPS location in moov/udta (©xyz) or moov/meta.
+  def test_media_zero_fills_movie_and_track_metadata
+    tkhd = S.full_box('tkhd', ("\0" * 72) + [1 << 16, 1 << 16].pack('NN'))
+    location = S.box('\xA9xyz'.b, P)
+    movie = lambda do |track_udta, udta, meta|
+      S.ftyp('isom', 'mp41') + S.box('moov', S.box('trak', tkhd + track_udta) + udta + meta) + S.box('mdat', "\0" * 16)
+    end
+    result, output = sanitize_media(movie[S.box('udta', P), S.box('udta', location), S.box('meta', P)], 'a.mp4')
+
+    assert result.safe?, result.detail
+    assert_equal movie[zero_free(P), zero_free(location), zero_free(P)], output
+  end
+
+  # HEIF with an image item (1) and an Exif item (2), both stored in mdat (iloc version 0).
+  def heif_with_exif(exif_type: 'Exif')
+    infe = ->(id, type) { S.box('infe', [2, 0, 0, id, 0].pack('CCnnn') + type + "\0") } # FullBox v2, name ""
+    build = lambda do |mdat_at|
+      iinf = S.full_box('iinf', [2].pack('n') + infe[1, 'hvc1'] + infe[2, exif_type])
+      iloc = S.full_box('iloc', [0x4400, 2, 1, 0, 1, mdat_at, 4, 2, 0, 1, mdat_at + 4, P.bytesize].pack('nnnnnNNnnnNN'))
+      ispe = S.full_box('ispe', [1, 1].pack('NN'))
+      S.ftyp('heic', 'mif1') + S.full_box('meta', iinf + iloc + S.box('iprp', S.box('ipco', ispe))) + S.box('mdat', "\x01\x02\x03\x04#{P}")
+    end
+    mdat_at = build[0].bytesize - 4 - P.bytesize # payload of the last box
+    build[mdat_at]
+  end
+
+  def test_media_zeroes_exif_items_of_an_image
+    bytes = heif_with_exif
+    result, output = sanitize_media(bytes, 'a.heic')
+
+    assert result.safe?, result.detail
+    expected = bytes.sub(P, "\0" * P.bytesize).sub("\x00\x02\x00\x00Exif".b, "\x00\x02\x00\x00skip".b)
+    assert_equal expected, output
+    assert_includes output, "\x00\x01\x00\x00hvc1\0".b # the image item is untouched
+  end
+
+  # Exif item stored in meta/idat (iloc version 1, construction method 1) or by item reference (method 2).
+  def heif_with_exif_in_idat(method)
+    infe = S.box('infe', [2, 0, 0, 2, 0].pack('CCnnn') + "Exif\0")
+    iloc = S.box('iloc', [1, 0, 0, 0x4400, 1, 2, method, 0, 1, 4, P.bytesize].pack('CCnnnnnnnNN'))
+    meta = S.full_box('meta', S.full_box('iinf', [1].pack('n') + infe) + iloc + S.box('idat', "abcd#{P}") +
+                              S.box('iprp', S.box('ipco', S.full_box('ispe', [1, 1].pack('NN')))))
+    S.ftyp('heic', 'mif1') + meta + S.box('mdat', '')
+  end
+
+  def test_media_zeroes_exif_items_stored_in_idat
+    result, output = sanitize_media(heif_with_exif_in_idat(1), 'a.heic')
+
+    assert result.safe?, result.detail
+    assert_includes output, S.box('idat', "abcd#{"\0" * P.bytesize}")
+  end
+
+  def test_media_with_exif_items_located_by_reference_is_unsupported
+    result, output = sanitize_media(heif_with_exif_in_idat(2), 'a.heic')
+
+    assert_equal :sanitize_unsupported, result.reason
+    assert_nil output
+  end
+
+  def test_media_without_metadata_items_is_copied
+    bytes = heif_with_exif(exif_type: 'hvc1')
+    assert_equal bytes, sanitize_media(bytes, 'a.heic').last
+  end
+
   # Needs libvips with libheif encoders (Debian/Ubuntu: libheif-plugin-x265, libheif-plugin-aomenc).
   def test_real_heic_and_avif_decode_after_sanitizing
     skip 'libvips not installed' unless system('vips --version', out: File::NULL, err: File::NULL)
@@ -380,6 +446,20 @@ class SanitizeTest < Minitest::Test
 
     assert result.safe?, result.detail
     assert_equal '8x16', IO.popen(['identify', '-format', '%wx%h', result.sanitized_path], err: File::NULL, &:read)
+  end
+
+  # Each frame is within the limit, all frames together are not.
+  def test_reencode_limits_the_pixels_of_all_frames
+    require_vips
+    skip 'ImageMagick not installed' unless system('convert -version', out: File::NULL, err: File::NULL)
+
+    source = tmp_path('frames.gif')
+    assert system('convert', '-size', '10x10', 'xc:red', 'xc:blue', 'xc:green', source, err: File::NULL)
+    result, output = sanitize(File.binread(source), 'frames.gif', reencode: true, max_image_pixels: 250)
+
+    assert_equal :image_too_many_pixels, result.reason
+    assert_nil output
+    assert sanitize(File.binread(source), 'frames.gif', reencode: true, max_image_pixels: 300).first.safe?
   end
 
   def test_reencode_leaves_svg_to_the_rewriter

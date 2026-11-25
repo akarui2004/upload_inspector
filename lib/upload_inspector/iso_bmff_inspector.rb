@@ -12,8 +12,9 @@ module UploadInspector
   # - declared dimensions (`ispe` image properties, `tkhd` track headers) must be within
   #   max_image_pixels
   #
-  # Given a block, verify! also yields (type, offset, length, header_length) for every
-  # top-level box, in file order.
+  # Given a block, verify! also yields (path, offset, length, header_length) for every top-level
+  # box, in file order, followed for moov and meta by their children, and for trak by its
+  # children; path names the box with its parents, e.g. "moov/trak/udta".
   class IsoBmffInspector
     include Rejectable
 
@@ -38,7 +39,10 @@ module UploadInspector
         image = type.start_with?('image/')
         top = {}
         each_box(0, io.size) do |box, start, finish, offset|
-          block&.call(box, offset, finish - offset, start - offset)
+          if block
+            block.call(box, offset, finish - offset, start - offset)
+            report_children(box, box == 'meta' ? start + 4 : start, finish, &block) if %w[moov meta].include?(box)
+          end
           if top.empty?
             malformed!('ftyp must come first') unless box == 'ftyp'
             check_ftyp!(type, start, finish)
@@ -77,6 +81,15 @@ module UploadInspector
 
         yield box, pos + header, pos + size, pos
         pos += size
+      end
+    end
+
+    # The check already walked these containers, so their children tile them.
+    def report_children(path, start, finish, &block)
+      each_box(start, finish) do |box, child_start, child_end, offset|
+        child = "#{path}/#{box}"
+        yield child, offset, child_end - offset, child_start - offset
+        report_children(child, child_start, child_end, &block) if box == 'trak'
       end
     end
 
