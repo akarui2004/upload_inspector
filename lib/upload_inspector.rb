@@ -85,13 +85,16 @@ module UploadInspector
   #   store(result.sanitized_path) if result.safe?
   #
   # +keep_orientation+ keeps the EXIF Orientation tag of a JPEG (and nothing else from EXIF),
-  # so the image is not shown rotated. Other keywords are the same as for check, without +mode+.
+  # so the image is not shown rotated. +neutralize_csv_formulas+ accepts CSV/TSV formula cells
+  # and writes them with a leading ' so spreadsheets show them as text.
+  # Other keywords are the same as for check, without +mode+.
   # Types that cannot be cleaned are rejected with :sanitize_unsupported.
-  def self.sanitize(source, to:, filename: nil, sandbox: true, keep_orientation: false, **policy_options)
+  def self.sanitize(source, to:, filename: nil, sandbox: true, keep_orientation: false, neutralize_csv_formulas: false,
+                    **policy_options)
     policy = Policy.new(**policy_options)
     Dir.mktmpdir('upload_inspector') do |workdir|
       output = File.join(workdir, 'sanitized')
-      result = inspect_source(source, filename:, sandbox:, policy:, sanitize: { output:, keep_orientation: })
+      result = inspect_source(source, filename:, sandbox:, policy:, sanitize: { output:, keep_orientation:, neutralize_csv_formulas: })
       next result unless result.safe?
 
       FileUtils.mv(output, to)

