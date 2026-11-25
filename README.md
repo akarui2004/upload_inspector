@@ -1,12 +1,27 @@
 # upload_inspector
 
-Fail-closed structural inspection of untrusted uploaded files for any Ruby or Rails app.
+Fail-closed structural inspection of untrusted uploaded files for any Ruby or Rails app, and
+**content disarm and reconstruction**: clean copies of uploads with metadata and hidden payloads removed.
 Checks a path, a Rails upload, an Active Storage attachment, any IO, or an S3 object uploaded
 through a presigned URL.
 
 A file is accepted only when its structure is proven to match a known-safe shape. Anything unknown,
 unparsable, encrypted, oversized, or erroring is rejected. Pure Ruby (`marcel`, `rubyzip`), no AV engine,
-no native parsers, nothing is rendered or executed.
+no native parsers, nothing is rendered or executed (libvips only for the optional re-encode).
+
+> **New in 0.9: `UploadInspector.sanitize`.** Writes a clean copy that keeps only the parts known
+> to be safe: EXIF with GPS location, XMP, comments, unknown chunks and payloads hidden in them
+> (a `<?php` web shell in a JPEG comment, a zip in an MP4 box) are removed from PNG, JPEG, GIF,
+> WebP, HEIC, AVIF, MP4 and QuickTime; SVG is rebuilt from an allowlist; CSV formulas can be
+> neutralized; `reencode: true` re-encodes images through libvips. The copy is checked again
+> before it is written.
+>
+> ```ruby
+> result = UploadInspector.sanitize(params[:file], to: clean_path, allowed_types: UploadInspector::Presets::IMAGES)
+> store(result.sanitized_path) if result.safe?
+> ```
+>
+> See [Sanitizing uploads (CDR)](#sanitizing-uploads-cdr).
 
 > **Not an antivirus.** It blocks structural attack vectors: disguised executables, macros, PDF
 > JavaScript, OLE objects, remote templates, DDE, zip bombs, image polyglots, scripted SVG and

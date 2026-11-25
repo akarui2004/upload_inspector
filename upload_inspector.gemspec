@@ -8,8 +8,15 @@ Gem::Specification.new do |spec|
   spec.authors = ['Minh Doan']
   spec.email = ['minhdpc@gmail.com']
 
-  spec.summary = 'Fail-closed structural inspection of untrusted uploads (PDF, Office, RTF, ODF, zip, images, video, CSV, Rails, S3).'
+  spec.summary = 'Sanitize (CDR) and fail-closed checks for untrusted uploads: clean copies of images, video, SVG and CSV; ' \
+                 'PDF, Office, zip and text verified.'
   spec.description = <<~DESC.tr("\n", " ").strip
+    NEW in 0.9: UploadInspector.sanitize, content disarm and reconstruction (CDR). It writes a
+    clean copy of an upload keeping only the parts known to be safe: EXIF with GPS location, XMP,
+    comments, unknown chunks and payloads hidden in them (a <?php web shell in a JPEG comment, a
+    zip in an MP4 box) are removed from PNG, JPEG, GIF, WebP, HEIC, AVIF, MP4 and QuickTime;
+    SVG is rebuilt from an allowlist; CSV formulas can be neutralized; optional full re-encode
+    through ruby-vips. The copy is checked again before it is written.
     Fail-closed checks for untrusted uploads: the real file type must be allowlisted and match
     the extension, and PDF, Office (OOXML, 97-2003, RTF, OpenDocument), zip, SVG, PNG, JPEG, GIF, WebP, HEIC, AVIF, MP4 and
     QuickTime files are verified structurally (scripts, macros, external links, appended data,
@@ -18,11 +25,9 @@ Gem::Specification.new do |spec|
     tricks are rejected. Works with file paths, Rails uploads, Active Storage, any IO and S3
     objects uploaded through presigned URLs, and ships a Rails validator, a background job,
     type presets, a report-only shadow mode, ActiveSupport instrumentation and helpers to serve
-    files safely (safe file names and response headers). sanitize writes a cleaned copy (content
-    disarm and reconstruction) of images, HEIC/AVIF/MP4, SVG and text: metadata such as GPS,
-    comments and unknown chunks are dropped; optional re-encoding through ruby-vips.
+    files safely (safe file names and response headers).
     Inspection runs in a resource-limited child process.
-    Pure Ruby, not an antivirus. If this gem helps you, a star on GitHub is much appreciated!
+    Pure Ruby (libvips only for the optional re-encode), not an antivirus. If this gem helps you, a star on GitHub is much appreciated!
     Usage and options: https://akarui2004.github.io/upload_inspector
   DESC
   spec.license = 'MIT'
