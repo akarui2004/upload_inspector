@@ -158,6 +158,57 @@ class SanitizeTest < Minitest::Test
     assert_equal riff(vp8x[0x20], iccp, vp8l), output
   end
 
+  # --- HEIC / AVIF / MP4 / QuickTime --------------------------------------------------
+
+  def sanitize_media(bytes, name) = sanitize(bytes, name, allowed_types: S::MEDIA)
+
+  def test_media_drops_trailing_boxes
+    clean = S.mp4
+    result, output = sanitize_media(clean + S.box('free', zip_bytes('a.pdf' => clean_pdf)) + S.box('uuid', "\0" * 16 + P), 'a.mp4')
+
+    assert result.safe?, result.detail
+    assert_equal clean, output
+  end
+
+  # Boxes before mdat cannot move: chunk offsets in moov are absolute.
+  def test_media_zero_fills_boxes_that_other_boxes_follow
+    ftyp = S.ftyp('isom', 'mp41')
+    moov = S.box('moov', S.track(1, 1))
+    mdat = S.box('mdat', "\0" * 16)
+    padding = S.box('free', P)
+    result, output = sanitize_media(ftyp + moov + padding + S.box('skip', P) + mdat, 'a.mp4')
+
+    assert result.safe?, result.detail
+    refute_includes output, P
+    assert_equal ftyp + moov + S.box('free', "\0" * P.bytesize) * 2 + mdat, output
+  end
+
+  def test_media_keeps_the_64_bit_size_form_of_a_zero_filled_box
+    large_free = [1].pack('N') + 'free'.b + [16 + P.bytesize].pack('Q>') + P
+    _, output = sanitize_media(S.ftyp('heic', 'mif1') + large_free + S.heif.byteslice(S.ftyp('heic', 'mif1').bytesize..), 'a.heic')
+
+    assert_includes output, [1].pack('N') + 'free'.b + [16 + P.bytesize].pack('Q>') + ("\0" * P.bytesize)
+    refute_includes output, P
+  end
+
+  # Needs libvips with libheif encoders (Debian/Ubuntu: libheif-plugin-x265, libheif-plugin-aomenc).
+  def test_real_heic_and_avif_decode_after_sanitizing
+    skip 'libvips not installed' unless system('vips --version', out: File::NULL, err: File::NULL)
+
+    encoded = %w[heic avif].select do |ext|
+      source = tmp_path("real.#{ext}")
+      compression = ext == 'heic' ? 'hevc' : 'av1'
+      next false unless system('vips', 'black', "#{source}[compression=#{compression}]", '16', '8', out: File::NULL, err: File::NULL)
+
+      bytes = File.binread(source)
+      result, output = sanitize_media(bytes + S.box('free', P), "real.#{ext}")
+      assert result.safe?, "#{ext}: #{result.reason} #{result.detail}"
+      assert_equal bytes, output
+      assert_equal "16\n", IO.popen(['vipsheader', '-f', 'width', result.sanitized_path], err: File::NULL, &:read), ext
+    end
+    skip 'libheif has no HEVC or AV1 encoder' if encoded.empty?
+  end
+
   # --- SVG ---------------------------------------------------------------------------
 
   SVG = 'image/svg+xml'

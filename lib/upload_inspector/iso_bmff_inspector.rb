@@ -11,6 +11,9 @@ module UploadInspector
   # - images must carry a `meta` box, video a `moov` box
   # - declared dimensions (`ispe` image properties, `tkhd` track headers) must be within
   #   max_image_pixels
+  #
+  # Given a block, verify! also yields (type, offset, length, header_length) for every
+  # top-level box, in file order.
   class IsoBmffInspector
     include Rejectable
 
@@ -29,12 +32,13 @@ module UploadInspector
       @policy = policy
     end
 
-    def verify!(path, type)
+    def verify!(path, type, &block)
       File.open(path, 'rb') do |io|
         @io = io
         image = type.start_with?('image/')
         top = {}
-        each_box(0, io.size) do |box, start, finish|
+        each_box(0, io.size) do |box, start, finish, offset|
+          block&.call(box, offset, finish - offset, start - offset)
           if top.empty?
             malformed!('ftyp must come first') unless box == 'ftyp'
             check_ftyp!(type, start, finish)
@@ -53,7 +57,7 @@ module UploadInspector
 
     attr_reader :policy
 
-    # Yields (type, payload_start, payload_end) for each box in [from, to), seeking past each one.
+    # Yields (type, payload_start, payload_end, box_start) for each box in [from, to), seeking past each one.
     def each_box(from, to)
       pos = from
       while pos < to
@@ -71,7 +75,7 @@ module UploadInspector
         malformed!("box type #{box.inspect}") unless box.match?(BOX_TYPE)
         malformed!("#{box} box length") if size < header || pos + size > to
 
-        yield box, pos + header, pos + size
+        yield box, pos + header, pos + size, pos
         pos += size
       end
     end

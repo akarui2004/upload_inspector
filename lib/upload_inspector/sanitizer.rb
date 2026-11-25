@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative 'sanitizers/image_rewriter'
+require_relative 'sanitizers/iso_bmff_rewriter'
 require_relative 'sanitizers/svg_rewriter'
 
 module UploadInspector
@@ -34,6 +35,8 @@ module UploadInspector
     def rewrite!(path, type)
       if ImageInspector::FORMATS.key?(type)
         Sanitizers::ImageRewriter.new(@policy, keep_orientation: @keep_orientation).rewrite(path, type, @output)
+      elsif IsoBmffInspector::TYPES.include?(type)
+        Sanitizers::IsoBmffRewriter.new(@policy).rewrite(path, type, @output)
       elsif type == SvgInspector::TYPE
         Sanitizers::SvgRewriter.new.rewrite(path, @output)
       else
