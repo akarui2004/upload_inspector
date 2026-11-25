@@ -4,6 +4,7 @@ require_relative 'sanitizers/image_rewriter'
 require_relative 'sanitizers/iso_bmff_rewriter'
 require_relative 'sanitizers/svg_rewriter'
 require_relative 'sanitizers/text_rewriter'
+require_relative 'sanitizers/vips_reencoder'
 
 module UploadInspector
   # Content disarm and reconstruction: checks a file, writes a new one holding only the parts
@@ -12,10 +13,11 @@ module UploadInspector
   class Sanitizer
     include Rejectable
 
-    def initialize(policy, output:, keep_orientation: false, neutralize_csv_formulas: false)
+    def initialize(policy, output:, keep_orientation: false, neutralize_csv_formulas: false, reencode: false)
       @policy = policy
       @output = output
       @keep_orientation = keep_orientation
+      @reencode = reencode
       @neutralize_csv_formulas = neutralize_csv_formulas
     end
 
@@ -37,7 +39,9 @@ module UploadInspector
   private
 
     def rewrite!(path, type)
-      if ImageInspector::FORMATS.key?(type)
+      if @reencode && Sanitizers::VipsReencoder.type?(type)
+        Sanitizers::VipsReencoder.reencode(path, type, @output, keep_orientation: @keep_orientation)
+      elsif ImageInspector::FORMATS.key?(type)
         Sanitizers::ImageRewriter.new(@policy, keep_orientation: @keep_orientation).rewrite(path, type, @output)
       elsif IsoBmffInspector::TYPES.include?(type)
         Sanitizers::IsoBmffRewriter.new(@policy).rewrite(path, type, @output)

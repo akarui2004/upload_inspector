@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'test_helper'
+require 'minitest/mock'
 require 'sample_virus_malware'
 
 class SanitizeTest < Minitest::Test
@@ -331,6 +332,62 @@ class SanitizeTest < Minitest::Test
 
   def test_text_markup_is_still_rejected
     assert_equal :text_markup, sanitize_text("<script>x</script>\n", 'a.txt', neutralize_csv_formulas: true).first.reason
+  end
+
+  # --- reencode (libvips) --------------------------------------------------------------
+
+  def require_vips
+    UploadInspector::Sanitizers::VipsReencoder.require_vips!
+  rescue ArgumentError
+    skip 'ruby-vips / libvips not installed (bundle config set --local with vips)'
+  end
+
+  def test_reencode_without_vips_raises_a_clear_error
+    raise_load_error = ->(_) { raise LoadError, 'cannot load such file -- vips' }
+    UploadInspector::Sanitizers::VipsReencoder.stub(:require, raise_load_error) do
+      error = assert_raises(ArgumentError) { sanitize(S.png, 'a.png', reencode: true) }
+      assert_match(/ruby-vips/, error.message)
+    end
+  end
+
+  def test_reencode_writes_new_images_without_the_payload
+    require_vips
+    skip 'ImageMagick not installed' unless system('convert -version', out: File::NULL, err: File::NULL)
+
+    %w[png jpg gif webp].each do |ext|
+      source = tmp_path("real.#{ext}")
+      assert system('convert', '-size', '16x8', 'gradient:red-blue', '-set', 'comment', P, source, err: File::NULL), ext
+      bytes = File.binread(source)
+      bytes = with_webp_exif(bytes, 16, 8) if ext == 'webp'
+      result, output = sanitize(bytes, "real.#{ext}", reencode: true, sandbox: ext == 'png')
+
+      assert result.safe?, "#{ext}: #{result.reason} #{result.detail}"
+      refute_includes output, P, ext
+      refute_equal bytes, output, ext
+      assert_equal "16x8\n", IO.popen(['identify', '-format', '%wx%h\n', result.sanitized_path], err: File::NULL, &:read), ext
+    end
+  end
+
+  # Orientation 6 (rotate 90 degrees clockwise) applied to the pixels: 16x8 becomes 8x16.
+  def test_reencode_with_keep_orientation_rotates_the_pixels
+    require_vips
+    skip 'ImageMagick not installed' unless system('convert -version', out: File::NULL, err: File::NULL)
+
+    source = tmp_path('rotated.jpg')
+    assert system('convert', '-size', '16x8', 'gradient:red-blue', source, err: File::NULL)
+    real = File.binread(source)
+    result, = sanitize(real.byteslice(0, 20) + exif(6) + real.byteslice(20..), 'rotated.jpg', reencode: true, keep_orientation: true)
+
+    assert result.safe?, result.detail
+    assert_equal '8x16', IO.popen(['identify', '-format', '%wx%h', result.sanitized_path], err: File::NULL, &:read)
+  end
+
+  def test_reencode_leaves_svg_to_the_rewriter
+    require_vips
+    result, output = sanitize('<svg xmlns="http://www.w3.org/2000/svg"><!-- x --></svg>', 'a.svg', allowed_types: [SVG], reencode: true)
+
+    assert result.safe?, result.detail
+    refute_includes output, '<!--'
   end
 
   def test_unsafe_upload_writes_nothing

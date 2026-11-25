@@ -86,15 +86,18 @@ module UploadInspector
   #
   # +keep_orientation+ keeps the EXIF Orientation tag of a JPEG (and nothing else from EXIF),
   # so the image is not shown rotated. +neutralize_csv_formulas+ accepts CSV/TSV formula cells
-  # and writes them with a leading ' so spreadsheets show them as text.
+  # and writes them with a leading ' so spreadsheets show them as text. +reencode+ decodes raster
+  # images (PNG, JPEG, GIF, WebP, HEIC, AVIF) with libvips and encodes new ones, which also drops
+  # anything hidden in pixel data; it needs the ruby-vips gem and raises ArgumentError without it.
   # Other keywords are the same as for check, without +mode+.
   # Types that cannot be cleaned are rejected with :sanitize_unsupported.
   def self.sanitize(source, to:, filename: nil, sandbox: true, keep_orientation: false, neutralize_csv_formulas: false,
-                    **policy_options)
+                    reencode: false, **policy_options)
     policy = Policy.new(**policy_options)
+    Sanitizers::VipsReencoder.require_vips! if reencode # fail now, not as a rejection
     Dir.mktmpdir('upload_inspector') do |workdir|
       output = File.join(workdir, 'sanitized')
-      result = inspect_source(source, filename:, sandbox:, policy:, sanitize: { output:, keep_orientation:, neutralize_csv_formulas: })
+      result = inspect_source(source, filename:, sandbox:, policy:, sanitize: { output:, keep_orientation:, neutralize_csv_formulas:, reencode: })
       next result unless result.safe?
 
       FileUtils.mv(output, to)
