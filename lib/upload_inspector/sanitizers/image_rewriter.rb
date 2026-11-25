@@ -1,11 +1,14 @@
 # frozen_string_literal: true
 
+require_relative 'icc_profile'
+
 module UploadInspector
   module Sanitizers
     # Rewrites a PNG, JPEG, GIF or WebP that passed the check, keeping only the blocks needed to
     # display it. Metadata (EXIF with GPS, XMP), comments, unknown chunks and extra MPF images are
     # dropped, and with them whatever a payload hid there (e.g. <?php in a JPEG comment).
     # Kept blocks are copied byte for byte; pixel data is not decoded (reencode covers that).
+    # A color profile is kept only when it is a structurally valid ICC profile (IccProfile).
     class ImageRewriter
       PNG_KEPT = [:signature, *%w[IHDR PLTE IDAT IEND tRNS gAMA cHRM sRGB iCCP pHYs acTL fcTL fdAT]].freeze # acTL.. = APNG frames
       PNG_MAX_CHUNK = 0x7FFF_FFFF
@@ -21,7 +24,6 @@ module UploadInspector
       WEBP_KEPT = ['VP8 ', 'VP8L', 'VP8X', 'ALPH', 'ANIM', 'ANMF', 'ICCP'].freeze
       WEBP_ICC_FLAG = 0x20
       WEBP_METADATA_FLAGS = 0x0C # EXIF and XMP
-      MAX_ICC_SIZE = MEGABYTE # larger color profiles are dropped, not copied
 
       def initialize(policy, keep_orientation: false)
         @policy = policy
@@ -48,11 +50,15 @@ module UploadInspector
         idat = blocks.select { |kind, *| kind == 'IDAT' } # consecutive, as the PNG spec requires
         blocks.each_with_object([]) do |(kind, offset, length), pieces|
           next unless PNG_KEPT.include?(kind)
-          next if kind == 'iCCP' && length > MAX_ICC_SIZE
+          next if kind == 'iCCP' && !png_icc?(offset, length)
           next pieces << [offset, length] unless kind == 'IDAT'
 
           pieces.concat(merged_idat(idat)) if offset == idat.first[1]
         end
+      end
+
+      def png_icc?(offset, length)
+        length <= IccProfile::MAX_SIZE && IccProfile.valid?(IccProfile.from_png(read(offset + 8, length - 12)))
       end
 
       # One IDAT holding the data of all of them (with a fresh CRC), unless that would overflow.
@@ -68,7 +74,7 @@ module UploadInspector
 
       def jpeg(blocks)
         pieces = []
-        icc_size = 0
+        icc = [] # [sequence number, piece, profile data] of each ICC segment
         orientation = nil
         exif_at = 1 # minimal EXIF goes right after SOI, or after a JFIF APP0 that follows it
         blocks.each do |kind, offset, length|
@@ -82,13 +88,18 @@ module UploadInspector
             pieces << [offset, length]
           when 0xE1 then orientation ||= exif_orientation(read(offset, length)) if @keep_orientation
           when 0xE2
-            next unless read(offset, length).byteslice(4, 12) == JPEG_ICC && (icc_size += length) <= MAX_ICC_SIZE
+            segment = read(offset, length)
+            next unless segment.byteslice(4, 12) == JPEG_ICC
 
-            pieces << [offset, length]
+            icc << [segment.getbyte(16).to_i, [offset, length], segment.byteslice(18..)]
+            pieces << icc.last[1]
           when 0xEE then pieces << [offset, length] if length == 16 && read(offset, length).byteslice(4, 5) == JPEG_ADOBE
           else pieces << [offset, length] if JPEG_KEPT.include?(kind)
           end
         end
+        # A profile split over APP2 segments is checked once put back together, in sequence order.
+        profile = icc.sort_by(&:first).sum(''.b) { |_, _, data| data.to_s }
+        pieces -= icc.map { |_, piece, _| piece } unless icc.empty? || IccProfile.valid?(profile)
         pieces.insert(exif_at, orientation_segment(orientation)) if orientation
         pieces
       end
@@ -145,7 +156,8 @@ module UploadInspector
           next unless WEBP_KEPT.include?(fourcc)
 
           declared = read(offset + 4, 4).unpack1('V')
-          [fourcc, offset, declared] unless fourcc == 'ICCP' && declared > MAX_ICC_SIZE
+          [fourcc, offset, declared] unless fourcc == 'ICCP' && !(declared <= IccProfile::MAX_SIZE &&
+                                                                  IccProfile.valid?(read(offset + 8, declared)))
         end
         icc = chunks.any? { |fourcc, *| fourcc == 'ICCP' }
         body = chunks.flat_map do |fourcc, offset, declared|

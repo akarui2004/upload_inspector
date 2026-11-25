@@ -242,13 +242,16 @@ end
 
 | Format | Kept | Dropped |
 |---|---|---|
-| PNG | IHDR, PLTE, IDAT (merged into one), IEND, tRNS, gAMA, cHRM, sRGB, iCCP (≤ 1 MB), pHYs, APNG frames | text chunks, eXIf, unknown chunks |
-| JPEG | frame, tables, scans, JFIF APP0, ICC profile (≤ 1 MB), Adobe APP14 (CMYK colors) | EXIF/XMP (APP1), comments, other APP segments, extra images (MPF: primary image kept) |
+| PNG | IHDR, PLTE, IDAT (merged into one), IEND, tRNS, gAMA, cHRM, sRGB, iCCP, pHYs, APNG frames | text chunks, eXIf, unknown chunks |
+| JPEG | frame, tables, scans, JFIF APP0, ICC profile, Adobe APP14 (CMYK colors) | EXIF/XMP (APP1), comments, other APP segments, extra images (MPF: primary image kept) |
 | GIF | header, color tables, frames, frame control, loop count | comments, plain text, other application extensions (XMP) |
-| WebP | VP8, VP8L, VP8X (flags fixed), ALPH, ANIM, ANMF, ICCP (≤ 1 MB) | EXIF, XMP, unknown chunks |
+| WebP | VP8, VP8L, VP8X (flags fixed), ALPH, ANIM, ANMF, ICCP | EXIF, XMP, unknown chunks |
 | HEIC / HEIF / AVIF / MP4 / QuickTime | the boxes needed to play the file | other top-level boxes (`free`, `skip`, `uuid`...), user data and metadata in `moov` and its tracks, Exif/XMP items: zero-filled in place so no offset moves, or removed at the end of the file |
 | SVG | allowlisted elements and attributes (shapes, text, gradients, patterns, masks, filters, `<style>`, `<a>`, `<title>`/`<desc>`, SMIL animation of kept attributes), re-escaped, UTF-8 | comments, processing instructions, DOCTYPE, `<metadata>`, unknown elements and attributes |
 | CSV / TSV / TXT | the text as is | nothing, unless `neutralize_csv_formulas: true` |
+
+Color profiles are kept (dropping them shifts the colors of wide-gamut photos) only when they
+are structurally valid ICC profiles of at most 1 MB; their tag data is copied as is.
 
 Other types (PDF, Office, zip...) are rejected as `:sanitize_unsupported`. Options:
 

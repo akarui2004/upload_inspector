@@ -56,12 +56,19 @@ class SanitizeTest < Minitest::Test
     assert checked.safe?, "#{checked.reason}: #{checked.detail}"
   end
 
+  # Smallest structurally valid ICC profile: 128-byte header with the acsp signature, no tags.
+  ICC = ([132].pack('N') + ("\0" * 32) + 'acsp' + ("\0" * 88) + [0].pack('N')).b.freeze
+  FAKE_ICC = "#{P}#{"\0" * 128}".b.freeze # stored where a profile belongs, but not one
+
+  def png_iccp(profile) = S.png_chunk('iCCP', "p\0\0#{Zlib::Deflate.deflate(profile)}")
+  def jpeg_icc(profile) = jpeg_segment(0xE2, "ICC_PROFILE\0\x01\x01#{profile}")
+
   def sub_blocks(data) = data.b.bytes.each_slice(255).map { |slice| [slice.size, *slice].pack('C*') }.join + "\0".b
 
   def test_png_keeps_image_chunks_and_drops_text_and_unknown_chunks
     idat = Zlib::Deflate.deflate("\0\0\0\0")
     head = S.png.byteslice(0, 33) # signature + IHDR
-    iccp = S.png_chunk('iCCP', "p\0\0xyz")
+    iccp = png_iccp(ICC)
     bytes = head + S.png_chunk('tEXt', "Comment\0#{P}") + S.png_chunk('zTXt', "c\0\0#{Zlib::Deflate.deflate(P)}") + iccp +
             S.png_chunk('IDAT', idat.byteslice(0, 5)) + S.png_chunk('IDAT', idat.byteslice(5..)) +
             S.png_chunk('eXIf', P) + S.png_chunk('prVt', P) + S.png_chunk('IEND', '')
@@ -107,7 +114,7 @@ class SanitizeTest < Minitest::Test
   end
 
   def test_jpeg_keeps_icc_profile_and_adobe_segments
-    icc = jpeg_segment(0xE2, "ICC_PROFILE\0\x01\x01profile")
+    icc = jpeg_icc(ICC)
     adobe = jpeg_segment(0xEE, "Adobe\0\x64\0\0\0\0\x01")
     jpeg = S.jpeg
     bytes = jpeg.byteslice(0, 20) + icc + adobe + jpeg.byteslice(20..)
@@ -150,7 +157,7 @@ class SanitizeTest < Minitest::Test
 
   def test_webp_drops_metadata_chunks_and_fixes_the_header
     vp8l = webp_chunk('VP8L', "\x2F\0\0\0\0\0")
-    iccp = webp_chunk('ICCP', 'profile')
+    iccp = webp_chunk('ICCP', ICC)
     vp8x = ->(flags) { webp_chunk('VP8X', [flags].pack('C') + ("\0" * 9)) } # 1x1 canvas
     bytes = riff(vp8x[0x2C], iccp, vp8l, webp_chunk('EXIF', P), webp_chunk('XMP ', P), webp_chunk('ABCD', P))
     result, output = sanitize(bytes, 'a.webp')
@@ -493,6 +500,46 @@ class SanitizeTest < Minitest::Test
 
     assert result.safe?, result.detail
     refute_includes output, '<!--'
+  end
+
+  def test_invalid_color_profiles_are_dropped
+    png = S.png
+    _, output = sanitize(png.byteslice(0, 33) + png_iccp(FAKE_ICC) + png.byteslice(33..), 'a.png')
+    assert_equal png, output
+
+    jpeg = S.jpeg
+    _, output = sanitize(jpeg.byteslice(0, 20) + jpeg_icc(FAKE_ICC) + jpeg.byteslice(20..), 'a.jpg')
+    assert_equal jpeg, output
+
+    vp8l = webp_chunk('VP8L', "\x2F\0\0\0\0\0")
+    vp8x = ->(flags) { webp_chunk('VP8X', [flags].pack('C') + ("\0" * 9)) }
+    _, output = sanitize(riff(vp8x[0x20], webp_chunk('ICCP', FAKE_ICC), vp8l), 'a.webp')
+    assert_equal riff(vp8x[0], vp8l), output # ICC flag cleared
+  end
+
+  # A JPEG profile split over APP2 segments is checked once reassembled in sequence order.
+  def test_jpeg_icc_profile_split_over_segments
+    jpeg = S.jpeg
+    parts = [jpeg_segment(0xE2, "ICC_PROFILE\0\x02\x02#{ICC.byteslice(60..)}"),
+             jpeg_segment(0xE2, "ICC_PROFILE\0\x01\x02#{ICC.byteslice(0, 60)}")]
+    bytes = jpeg.byteslice(0, 20) + parts.join + jpeg.byteslice(20..)
+    assert_equal bytes, sanitize(bytes, 'a.jpg').last
+  end
+
+  def test_real_color_profiles_are_kept
+    skip 'libvips not installed' unless system('vips --version', out: File::NULL, err: File::NULL)
+    skip 'ImageMagick not installed' unless system('convert -version', out: File::NULL, err: File::NULL)
+
+    %w[png jpg webp].each do |ext|
+      plain = tmp_path("plain-#{ext}.png")
+      source = tmp_path("icc.#{ext}")
+      assert system('vips', 'black', plain, '16', '8', '--bands', '3', out: File::NULL, err: File::NULL)
+      assert system('vips', 'icc_transform', plain, source, 'srgb', '--input-profile', 'srgb', out: File::NULL, err: File::NULL), ext
+      result, = sanitize(File.binread(source), "icc.#{ext}")
+
+      assert result.safe?, "#{ext}: #{result.reason} #{result.detail}"
+      assert_equal 'sRGB', IO.popen(['identify', '-format', '%[profile:icc]', result.sanitized_path], err: File::NULL, &:read), ext
+    end
   end
 
   def test_unsafe_upload_writes_nothing
