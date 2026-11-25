@@ -158,6 +158,90 @@ class SanitizeTest < Minitest::Test
     assert_equal riff(vp8x[0x20], iccp, vp8l), output
   end
 
+  # --- SVG ---------------------------------------------------------------------------
+
+  SVG = 'image/svg+xml'
+
+  def sanitize_svg(svg) = sanitize(svg, 'a.svg', allowed_types: [SVG])
+
+  def test_svg_is_rebuilt_from_allowlisted_elements_and_attributes
+    svg = <<~SVG
+      <?xml version="1.0"?>
+      <!-- #{P} -->
+      <svg xmlns="http://www.w3.org/2000/svg" xmlns:x="urn:x" viewBox="0 0 10 10" data-p="1" x:a="b">
+        <metadata><rdf>#{P.sub('<', '&lt;')}</rdf></metadata>
+        <title>Logo &amp; &#x41;</title>
+        <foo><rect width="1"/></foo>
+        <style><![CDATA[rect > .a { fill: red }]]></style>
+        <rect width="10" height="10" fill="red" unknown="1">
+          <animate attributeName="opacity" from="1" to="0" dur="1s"/>
+          <set attributeName="style" to="fill:blue"/>
+          <set attributeName="data-p" to="1"/>
+          <set to="1"/>
+        </rect>
+        <desc>#{P.sub('<', '&lt;')}</desc>
+      </svg>
+    SVG
+    result, output = sanitize_svg(svg)
+
+    assert result.safe?, result.detail
+    assert_equal <<~SVG.chomp, output
+      <?xml version="1.0" encoding="UTF-8"?>
+      <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 10 10">
+        
+        <title>Logo &amp; A</title>
+        
+        <style>rect &gt; .a { fill: red }</style>
+        <rect width="10" height="10" fill="red">
+          <animate attributeName="opacity" from="1" to="0" dur="1s"/>
+          
+          
+          
+        </rect>
+        <desc>&lt;?php echo 'inert sample'; ?&gt;</desc>
+      </svg>
+    SVG
+    refute_includes output, P
+  end
+
+  def test_svg_keeps_links_inside_the_document_and_animation_paths
+    svg = '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"><defs><path id="p" d="M0 0L9 9"/></defs>' \
+          '<use xlink:href="#p"/><circle r="1"><animateMotion dur="2s"><mpath href="#p"/></animateMotion></circle>' \
+          '<a href="https://example.com/"><text x="1" y="2" xml:space="preserve">a&#10;b</text></a></svg>'
+    result, output = sanitize_svg(svg)
+
+    assert result.safe?, result.detail
+    assert_equal ['https://example.com/'], result.links
+    assert_equal %(<?xml version="1.0" encoding="UTF-8"?>\n#{svg.sub(' xmlns:xlink="http://www.w3.org/1999/xlink"', '')
+                                                              .sub('<svg xmlns="http://www.w3.org/2000/svg"',
+                                                                   '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"')
+                                                              .sub('a&#10;b', "a\nb")}), output
+  end
+
+  def test_svg_in_latin1_comes_out_as_utf8
+    _, output = sanitize_svg(%(<?xml version="1.0" encoding="ISO-8859-1"?><svg xmlns="http://www.w3.org/2000/svg"><title>caf\xE9</title></svg>).b)
+
+    assert_includes output.force_encoding(Encoding::UTF_8), '<title>café</title>'
+  end
+
+  def test_hostile_svg_is_still_rejected_and_writes_nothing
+    result, output = sanitize_svg('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>')
+
+    assert_equal :svg_active_content, result.reason
+    assert_nil output
+  end
+
+  def test_real_svg_renders_after_sanitizing
+    skip 'libvips not installed' unless system('vips --version', out: File::NULL, err: File::NULL)
+
+    svg = %(<svg xmlns="http://www.w3.org/2000/svg" width="16" height="8"><!-- #{P} --><metadata>x</metadata>) +
+          '<linearGradient id="g"><stop offset="0" stop-color="red"/></linearGradient><rect width="16" height="8" fill="url(#g)"/></svg>'
+    result, = sanitize_svg(svg)
+
+    assert result.safe?, result.detail
+    assert_equal "16\n", IO.popen(['vipsheader', '-f', 'width', result.sanitized_path], err: File::NULL, &:read)
+  end
+
   def test_unsafe_upload_writes_nothing
     result, output = sanitize(S.png + P, 'a.png')
 

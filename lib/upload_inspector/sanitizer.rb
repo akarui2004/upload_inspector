@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative 'sanitizers/image_rewriter'
+require_relative 'sanitizers/svg_rewriter'
 
 module UploadInspector
   # Content disarm and reconstruction: checks a file, writes a new one holding only the parts
@@ -33,6 +34,8 @@ module UploadInspector
     def rewrite!(path, type)
       if ImageInspector::FORMATS.key?(type)
         Sanitizers::ImageRewriter.new(@policy, keep_orientation: @keep_orientation).rewrite(path, type, @output)
+      elsif type == SvgInspector::TYPE
+        Sanitizers::SvgRewriter.new.rewrite(path, @output)
       else
         reject!(:sanitize_unsupported, type)
       end
