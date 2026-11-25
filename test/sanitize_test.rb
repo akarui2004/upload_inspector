@@ -526,6 +526,14 @@ class SanitizeTest < Minitest::Test
     assert_equal bytes, sanitize(bytes, 'a.jpg').last
   end
 
+  # Segments are not buffered past the profile size limit, and the profile is dropped.
+  def test_jpeg_icc_segments_over_the_size_limit_are_dropped
+    jpeg = S.jpeg
+    filler = jpeg_segment(0xE2, "ICC_PROFILE\0\x01\x01#{"\0" * 65_000}")
+    bytes = jpeg.byteslice(0, 20) + jpeg_icc(ICC) + (filler * 17) + jpeg.byteslice(20..) # > 1 MB
+    assert_equal jpeg, sanitize(bytes, 'a.jpg').last
+  end
+
   def test_real_color_profiles_are_kept
     skip 'libvips not installed' unless system('vips --version', out: File::NULL, err: File::NULL)
     skip 'ImageMagick not installed' unless system('convert -version', out: File::NULL, err: File::NULL)

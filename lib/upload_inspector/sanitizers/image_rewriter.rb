@@ -75,6 +75,7 @@ module UploadInspector
       def jpeg(blocks)
         pieces = []
         icc = [] # [sequence number, piece, profile data] of each ICC segment
+        icc_size = 0 # past IccProfile::MAX_SIZE, data is no longer kept: the profile is dropped
         orientation = nil
         exif_at = 1 # minimal EXIF goes right after SOI, or after a JFIF APP0 that follows it
         blocks.each do |kind, offset, length|
@@ -91,14 +92,15 @@ module UploadInspector
             segment = read(offset, length)
             next unless segment.byteslice(4, 12) == JPEG_ICC
 
-            icc << [segment.getbyte(16).to_i, [offset, length], segment.byteslice(18..)]
+            icc_size += length
+            icc << [segment.getbyte(16).to_i, [offset, length], (segment.byteslice(18..) if icc_size <= IccProfile::MAX_SIZE)]
             pieces << icc.last[1]
           when 0xEE then pieces << [offset, length] if length == 16 && read(offset, length).byteslice(4, 5) == JPEG_ADOBE
           else pieces << [offset, length] if JPEG_KEPT.include?(kind)
           end
         end
         # A profile split over APP2 segments is checked once put back together, in sequence order.
-        profile = icc.sort_by(&:first).sum(''.b) { |_, _, data| data.to_s }
+        profile = icc.sort_by(&:first).map(&:last).join.b if icc_size <= IccProfile::MAX_SIZE
         pieces -= icc.map { |_, piece, _| piece } unless icc.empty? || IccProfile.valid?(profile)
         pieces.insert(exif_at, orientation_segment(orientation)) if orientation
         pieces
