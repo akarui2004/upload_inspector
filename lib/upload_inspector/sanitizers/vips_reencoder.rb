@@ -33,12 +33,17 @@ module UploadInspector
         raise ArgumentError, "reencode: true needs the ruby-vips gem and libvips (#{e.message})"
       end
 
-      # Writes a re-encoded copy of +path+ (detected +type+) to +output+.
-      def reencode(path, type, output, keep_orientation: false)
+      # Writes a re-encoded copy of +path+ (detected +type+) to +output+. The check limits each
+      # frame to max_image_pixels; decoding every frame of an animation is limited in total.
+      def reencode(path, type, output, max_pixels:, keep_orientation: false)
         require_vips!
         options = { fail_on: :error }
-        options[:n] = -1 if ANIMATED.include?(type) # every frame
-        image = Vips::Image.public_send(LOADERS.fetch(type), path, **options)
+        options[:n] = -1 if ANIMATED.include?(type) # every frame, stacked vertically
+        image = Vips::Image.public_send(LOADERS.fetch(type), path, **options) # reads the header only
+        if image.width * image.height > max_pixels
+          raise Rejection.new(:image_too_many_pixels, "#{image.width}x#{image.height} decoded pixels exceed #{max_pixels}")
+        end
+
         image = image.icc_transform('srgb', embedded: true) if image.get_typeof('icc-profile-data').positive?
         image = image.autorot if keep_orientation
         encoded = output + SUFFIXES.fetch(type) # libvips picks the encoder from the suffix

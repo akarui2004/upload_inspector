@@ -40,7 +40,8 @@ module UploadInspector
 
     def rewrite!(path, type)
       if @reencode && Sanitizers::VipsReencoder.type?(type)
-        Sanitizers::VipsReencoder.reencode(path, type, @output, keep_orientation: @keep_orientation)
+        Sanitizers::VipsReencoder.reencode(path, type, @output, max_pixels: @policy.max_image_pixels,
+                                                               keep_orientation: @keep_orientation)
       elsif ImageInspector::FORMATS.key?(type)
         Sanitizers::ImageRewriter.new(@policy, keep_orientation: @keep_orientation).rewrite(path, type, @output)
       elsif IsoBmffInspector::TYPES.include?(type)
