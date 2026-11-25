@@ -91,17 +91,26 @@ module UploadInspector
   # anything hidden in pixel data; it needs the ruby-vips gem and raises ArgumentError without it.
   # Other keywords are the same as for check, without +mode+.
   # Types that cannot be cleaned are rejected with :sanitize_unsupported.
+  #
+  # With ActiveSupport loaded, each call publishes "sanitize.upload_inspector" with payload
+  # { reason:, detected_type:, filename_ext:, size: }.
   def self.sanitize(source, to:, filename: nil, sandbox: true, keep_orientation: false, neutralize_csv_formulas: false,
                     reencode: false, **policy_options)
     policy = Policy.new(**policy_options)
     Sanitizers::VipsReencoder.require_vips! if reencode # fail now, not as a rejection
-    Dir.mktmpdir('upload_inspector') do |workdir|
-      output = File.join(workdir, 'sanitized')
-      result = inspect_source(source, filename:, sandbox:, policy:, sanitize: { output:, keep_orientation:, neutralize_csv_formulas:, reencode: })
-      next result unless result.safe?
+    options = { keep_orientation:, neutralize_csv_formulas:, reencode: }
+    payload = {}
+    instrument('sanitize.upload_inspector', payload) do
+      result = Dir.mktmpdir('upload_inspector') do |workdir|
+        output = File.join(workdir, 'sanitized')
+        checked = inspect_source(source, filename:, sandbox:, policy:, payload:, sanitize: { output:, **options })
+        next checked unless checked.safe?
 
-      FileUtils.mv(output, to)
-      result.with(sanitized_path: File.path(to))
+        FileUtils.mv(output, to)
+        checked.with(sanitized_path: File.path(to))
+      end
+      payload.merge!(reason: result.reason, detected_type: result.detected_type)
+      result
     end
   end
 
@@ -163,7 +172,7 @@ module UploadInspector
     raise ArgumentError, "mode must be one of: #{MODES.join(', ')}" unless MODES.include?(mode)
 
     payload = { mode: }
-    instrument(payload) do
+    instrument('check.upload_inspector', payload) do
       result = yield payload
       result = result.reported if mode == :report
       payload.merge!(reason: result.reason, would_reject: result.would_reject, detected_type: result.detected_type)
@@ -172,10 +181,10 @@ module UploadInspector
   end
   private_class_method :observe
 
-  def self.instrument(payload, &)
+  def self.instrument(event, payload, &)
     return yield unless defined?(ActiveSupport::Notifications)
 
-    ActiveSupport::Notifications.instrument('check.upload_inspector', payload, &)
+    ActiveSupport::Notifications.instrument(event, payload, &)
   end
   private_class_method :instrument
 end

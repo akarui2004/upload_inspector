@@ -19,6 +19,7 @@
     this option raises `ArgumentError` without it).
   - Other types are rejected as `:sanitize_unsupported`.
 - `Result#sanitized_path` (nil except for a successful `sanitize`).
+- With ActiveSupport loaded, `sanitize` publishes `sanitize.upload_inspector`.
 
 ## 0.8.1
 

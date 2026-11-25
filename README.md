@@ -191,6 +191,8 @@ ActiveSupport::Notifications.subscribe("check.upload_inspector") do |event|
 end
 ```
 
+`sanitize` publishes `sanitize.upload_inspector` with `{ reason:, detected_type:, filename_ext:, size: }`.
+
 ### Serving uploads safely
 
 A checked file can still be dangerous if the app serves it so a browser renders it as a page.
