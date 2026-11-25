@@ -18,7 +18,9 @@ Gem::Specification.new do |spec|
     tricks are rejected. Works with file paths, Rails uploads, Active Storage, any IO and S3
     objects uploaded through presigned URLs, and ships a Rails validator, a background job,
     type presets, a report-only shadow mode, ActiveSupport instrumentation and helpers to serve
-    files safely (safe file names and response headers).
+    files safely (safe file names and response headers). sanitize writes a cleaned copy (content
+    disarm and reconstruction) of images, HEIC/AVIF/MP4, SVG and text: metadata such as GPS,
+    comments and unknown chunks are dropped; optional re-encoding through ruby-vips.
     Inspection runs in a resource-limited child process.
     Pure Ruby, not an antivirus. If this gem helps you, a star on GitHub is much appreciated!
     Usage and options: https://akarui2004.github.io/upload_inspector
