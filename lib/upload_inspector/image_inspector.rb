@@ -8,6 +8,14 @@ module UploadInspector
   # resizes the image later), and the file must end where the image ends, so nothing can be
   # appended (a script, an archive: the usual image polyglot). JPEG files holding several
   # images back to back (Multi-Picture Format: HDR gain maps, depth maps) are accepted.
+  #
+  # Given a block, verify! also yields (kind, offset, length) for every block it walks. The
+  # blocks tile the file in order, so a rewriter can copy the ones it keeps byte for byte:
+  # - PNG:  :signature, then each chunk by type ("IHDR", "tEXt", ...), header and CRC included
+  # - JPEG: each marker segment by marker byte (0xD8 SOI starts every image, 0xD9 EOI ends
+  #         it), fill bytes included, and :scan_data for the entropy-coded data after an SOS
+  # - GIF:  :header (with the global color table), :extension, :image, :trailer
+  # - WebP: :riff (RIFF header), then each chunk by FourCC, padding included
   class ImageInspector
     include Rejectable
 
@@ -23,7 +31,8 @@ module UploadInspector
       @policy = policy
     end
 
-    def verify!(path, type)
+    def verify!(path, type, &block)
+      @block = block
       File.open(path, 'rb') do |io|
         @io = io
         @size = io.size
@@ -38,17 +47,21 @@ module UploadInspector
 
     def png
       malformed!('signature') unless take(8) == PNG_SIGNATURE
+      emit(:signature, 0)
       length, type = take(8).unpack('Na4')
       malformed!('IHDR must come first') unless type == 'IHDR' && length == 13
       check_pixels!(*take(8).unpack('NN'))
       skip(5 + 4)
+      emit(type, 8)
 
       has_data = false
       until type == 'IEND'
+        start = @io.pos
         length, type = take(8).unpack('Na4')
         malformed!('chunk type') unless type.match?(/\A[A-Za-z]{4}\z/)
         has_data ||= type == 'IDAT'
         skip(length + 4) # data and CRC
+        emit(type, start)
       end
       malformed!('no image data') unless has_data
     end
@@ -61,10 +74,14 @@ module UploadInspector
     end
 
     def jpeg_image
+      start = @io.pos
       malformed!('signature') unless take(2) == JPEG_SOI
+      emit(0xD8, start)
       frames = 0
       loop do
+        start = @io.pos
         marker = jpeg_marker
+        emit(marker, start) if marker == 0xD9 || JPEG_STANDALONE.include?(marker)
         break if marker == 0xD9
         next if JPEG_STANDALONE.include?(marker)
 
@@ -79,6 +96,7 @@ module UploadInspector
         else
           skip(length - 2)
         end
+        emit(marker, start)
         skip_jpeg_scan_data if marker == 0xDA
       end
       malformed!('no frame') if frames.zero?
@@ -94,11 +112,15 @@ module UploadInspector
 
     # Entropy-coded data has no length; it runs until the next real marker.
     def skip_jpeg_scan_data
+      scan_start = @io.pos
       loop do
         start = @io.pos
         chunk = @io.read(SCAN_CHUNK_SIZE) || malformed!('truncated')
         index = chunk.index(JPEG_NEXT_MARKER)
-        return @io.seek(start + index) if index
+        if index
+          @io.seek(start + index)
+          return emit(:scan_data, scan_start)
+        end
 
         malformed!('truncated') if @io.pos >= @size
         @io.seek(-1, IO::SEEK_CUR) if chunk.getbyte(-1) == 0xFF # marker split across chunks
@@ -110,20 +132,24 @@ module UploadInspector
       width, height, flags = take(7).unpack('vvC')
       check_pixels!(width, height)
       skip_gif_color_table(flags)
+      emit(:header, 0)
 
       images = 0
       loop do
+        start = @io.pos
         case take(1).ord
-        when 0x3B then break
+        when 0x3B then break emit(:trailer, start)
         when 0x21 # extension: label, then data sub-blocks
           take(1)
           skip_gif_sub_blocks
+          emit(:extension, start)
         when 0x2C
           _, _, width, height, flags = take(9).unpack('vvvvC')
           check_pixels!(width, height)
           skip_gif_color_table(flags)
           take(1) # LZW minimum code size
           skip_gif_sub_blocks
+          emit(:image, start)
           images += 1
         else malformed!('block')
         end
@@ -146,14 +172,17 @@ module UploadInspector
       malformed!('signature') unless riff == 'RIFF' && format == 'WEBP'
       reject!(:image_trailing_data, 'data after the RIFF container') if riff_size + 8 < @size
       malformed!('truncated') if riff_size + 8 > @size
+      emit(:riff, 0)
 
       first = true
       while @io.pos < @size
+        start = @io.pos
         fourcc, length = take(8).unpack('a4V')
         header = first ? take([length, 10].min) : ''.b
         check_pixels!(*webp_dimensions(fourcc, header)) if first
         skip(length - header.bytesize)
         skip(1) if length.odd? && @io.pos < @size # chunks are padded to an even size
+        emit(fourcc, start)
         first = false
       end
       malformed!('no image data') if first
@@ -173,6 +202,12 @@ module UploadInspector
         header.byteslice(6, 4).unpack('vv').map { |value| value & 0x3FFF }
       else malformed!('first chunk')
       end
+    end
+
+    # Hands the block that ends at the current position to the caller's block, if any.
+    def emit(kind, start)
+      @block&.call(kind, start, @io.pos - start)
+      nil
     end
 
     def check_pixels!(width, height)
