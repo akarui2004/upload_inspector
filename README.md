@@ -375,6 +375,24 @@ For S3 buckets with [GuardDuty Malware Protection for S3](https://docs.aws.amazo
 `NO_THREATS_FOUND` goes on to the inspection, other statuses are `:scanner_failed`. While the tag
 is missing (scan not finished) it raises `UploadInspector::Scanners::Pending`, so the job retries.
 
+The tag is only a verdict if the uploader cannot write it: a presigned POST policy or any
+principal with `s3:PutObjectTagging` could tag its own object `NO_THREATS_FOUND`. Deny setting
+that tag key to everyone but GuardDuty's role in the bucket policy (or pass a `scanner:` too):
+
+```json
+{
+  "Sid": "OnlyGuardDutySetsScanStatus",
+  "Effect": "Deny",
+  "Principal": "*",
+  "Action": ["s3:PutObject", "s3:PutObjectTagging", "s3:PutObjectVersionTagging"],
+  "Resource": "arn:aws:s3:::uploads/*",
+  "Condition": {
+    "ForAnyValue:StringEquals": { "s3:RequestObjectTagKeys": "GuardDutyMalwareScanStatus" },
+    "StringNotEquals": { "aws:PrincipalArn": "arn:aws:iam::123456789012:role/GuardDutyS3MalwareProtectionRole" }
+  }
+}
+```
+
 ### Protecting the server from large files
 
 No input is read into Ruby memory: S3 objects and IO are streamed to a temp file, Rails uploads

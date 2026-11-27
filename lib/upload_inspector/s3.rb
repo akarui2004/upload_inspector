@@ -22,6 +22,9 @@ module UploadInspector
     # :malware_detected, NO_THREATS_FOUND goes on to the inspection, any other status
     # (UNSUPPORTED, ACCESS_DENIED, FAILED) is :scanner_failed (accepted with +scanner_fail_open+).
     # No tag yet raises Scanners::Pending, so a job retries once the scan is done.
+    # The tag is only as trustworthy as who may write it: the bucket policy must deny setting
+    # it to every principal but GuardDuty's role (see README), or an uploader can tag its own
+    # object NO_THREATS_FOUND.
     def check(client:, bucket:, key:, filename:, version_id:, sandbox:, policy:, payload: {}, scanner: nil,
               scanner_fail_open: false, require_guardduty_tag: false)
       object = { bucket:, key:, version_id: }.compact

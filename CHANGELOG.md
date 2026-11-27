@@ -14,7 +14,8 @@
   - `InspectJob` raises `Scanners::Error` on `:scanner_failed` instead of purging, so it can retry.
   - With ActiveSupport loaded, each scan publishes `scan.upload_inspector`.
 - `check_s3(require_guardduty_tag: true)`: reads GuardDuty Malware Protection for S3's
-  `GuardDutyMalwareScanStatus` tag; raises `Scanners::Pending` while it is missing.
+  `GuardDutyMalwareScanStatus` tag; raises `Scanners::Pending` while it is missing. Only GuardDuty's
+  role may be allowed to set that tag (bucket policy in the README).
 - Without `scanner:` / `require_guardduty_tag:` nothing changes.
 
 ## 0.9.1
