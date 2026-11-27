@@ -48,6 +48,25 @@ jobs:
       # Every decoder is installed here, so a skipped cross-check is a failure.
       - run: bundle exec ruby -Ilib -Itest test/sanitize_test.rb --verbose | tee sanitize.log && ! grep -q 'Skipped:' sanitize.log
 
+  # Shrine, CarrierWave, Active Storage analyzer and Rack middleware against the real gems.
+  integrations:
+    name: Integrations (Shrine, CarrierWave, Active Storage, Rack)
+    runs-on: ubuntu-latest
+    env:
+      BUNDLE_WITH: integration
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+          bundler-cache: true
+      # The gems are installed here, so a skipped integration test is a failure.
+      - run: >-
+          bundle exec ruby -Ilib -Itest -e 'Dir["test/integrations/*_test.rb"].each { require_relative _1 }' -- --verbose
+          | tee integrations.log && ! grep -q 'Skipped:' integrations.log
+
   # Scanners::ClamAV against a real clamd with the EICAR test file.
   clamav:
     name: ClamAV scanner

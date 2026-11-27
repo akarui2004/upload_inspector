@@ -39,7 +39,9 @@ Gem::Specification.new do |spec|
   spec.metadata['source_code_uri'] = 'https://github.com/akarui2004/upload_inspector'
   spec.homepage = 'https://akarui2004.github.io/upload_inspector'
 
-  spec.files = Dir['lib/**/*.rb', 'README.md', 'CHANGELOG.md', 'LICENSE.txt']
+  spec.files = Dir['lib/**/*.rb', 'exe/*', 'README.md', 'CHANGELOG.md', 'LICENSE.txt']
+  spec.bindir = 'exe'
+  spec.executables = ['upload_inspector']
   spec.require_paths = ['lib']
 
   spec.add_dependency 'marcel', '~> 1.0'

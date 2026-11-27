@@ -83,6 +83,8 @@ Requires Ruby >= 3.2.
 - [Error messages](#error-messages)
 - [S3 (presigned URL uploads)](#s3-presigned-url-uploads)
 - [Malware scanning](#malware-scanning)
+- [Active Storage analyzer, Shrine, CarrierWave, Rack](#active-storage-analyzer-shrine-carrierwave-rack)
+- [Command line](#command-line)
 - [Protecting the server from large files](#protecting-the-server-from-large-files)
 - [Policy options](#policy-options)
 
@@ -375,6 +377,104 @@ For S3 buckets with [GuardDuty Malware Protection for S3](https://docs.aws.amazo
 `NO_THREATS_FOUND` goes on to the inspection, other statuses are `:scanner_failed`. While the tag
 is missing (scan not finished) it raises `UploadInspector::Scanners::Pending`, so the job retries.
 
+### Active Storage analyzer, Shrine, CarrierWave, Rack
+
+Each loads only when you use it; the gem depends on none of these libraries. Options are the
+same keywords as `check` (Policy options, `sandbox:`, `scanner:`, `mode:`).
+
+**Active Storage analyzer**: inspects every blob once uploaded, direct uploads included (the
+validator never sees those), and records the verdict in `blob.metadata`. To act on unsafe blobs,
+subclass it, override `on_unsafe(result)` and register the subclass instead.
+
+```ruby
+# config/initializers/upload_inspector.rb
+UploadInspector::ActiveStorageAnalyzer.options = { allowed_types: ALLOWED_TYPES }
+Rails.application.config.active_storage.analyzers.prepend UploadInspector::ActiveStorageAnalyzer
+
+blob.metadata[:upload_inspector] # => { "safe" => false, "reason" => "pdf_active_content", "detected_type" => "application/pdf" }
+```
+
+```ruby
+class FlagUnsafeUploads < UploadInspector::ActiveStorageAnalyzer
+  def on_unsafe(result) # runs before the metadata is saved; `blob` is the blob
+    blob.attachments.each(&:purge_later)
+  end
+end
+```
+
+Active Storage runs one analyzer per blob; this one merges in the metadata of the analyzer that
+would have run otherwise (image width/height, video duration).
+
+**Shrine** (3.x): validation errors join your `Attacher.validate` block; `sanitize: true` stores
+a cleaned copy on promote (types that cannot be cleaned, like PDF, are stored as checked).
+
+```ruby
+class DocumentUploader < Shrine
+  plugin :upload_inspector, allowed_types: ALLOWED_TYPES, sanitize: true
+end
+attacher.errors                  # => ["does not match its file extension"]
+attacher.upload_inspector_result # => the Result
+```
+
+**CarrierWave** (3.x): unsafe files raise `CarrierWave::IntegrityError` when cached, before any
+processing, so the model gets a validation error with the rejection message.
+
+```ruby
+class DocumentUploader < CarrierWave::Uploader::Base
+  include UploadInspector::CarrierWave
+  def upload_inspector_options = { allowed_types: ALLOWED_TYPES }
+  process :upload_inspector_sanitize # optional: keep a cleaned copy
+end
+```
+
+**Rack middleware** (any Rack app): checks every file of multipart requests to `paths` and
+answers `422` with `{ "error": message, "reason": reason, "field": "doc[file]" }` when one is
+unsafe. The check runs inside the request: list only upload endpoints taking small files and
+check large ones in a job.
+
+```ruby
+use UploadInspector::Rack, paths: [%r{\A/uploads}], allowed_types: ALLOWED_TYPES
+```
+
+**Sinatra / Hanami / Roda** need no adapter: call `check` on the uploaded tempfile.
+
+```ruby
+# Sinatra
+post "/uploads" do
+  upload = params[:file] # { filename:, tempfile:, ... }
+  result = UploadInspector.check(upload[:tempfile], filename: upload[:filename], allowed_types: ALLOWED_TYPES)
+  halt 422, result.message unless result.safe?
+end
+
+# Hanami action
+def handle(request, response)
+  upload = request.params[:file]
+  result = UploadInspector.check(upload[:tempfile], filename: upload[:filename], allowed_types: ALLOWED_TYPES)
+  halt 422, result.message unless result.safe?
+end
+```
+
+### Command line
+
+`upload_inspector` checks files, re-scans a directory of stored uploads (after an incident, or
+when tightening the policy), or sanitizes a file. Exit status: 0 all safe, 1 something unsafe,
+2 usage or runtime error.
+
+```sh
+upload_inspector check report.pdf photo.jpg --types documents,images
+upload_inspector scan public/uploads --recursive --types pdf,images --json > verdicts.jsonl
+upload_inspector sanitize photo.jpg --out clean.jpg --types images
+upload_inspector check file.docx --types office --clamav /var/run/clamav/clamd.ctl   # or --clamav clamav:3310
+```
+
+- `--types` takes MIME types and preset names (`pdf`, `office`, `documents`, `images`, `svg`,
+  `media`, `text`); the default is PDF only, as for `check`.
+- `--json` prints one JSON object per file and line, as soon as it is checked.
+- The name checked against the content is the file's basename. Stores that name files by a
+  random key without extension (Active Storage's disk service) are better checked through the
+  app: `blob.open` with `blob.filename`, or `InspectJob`.
+- `scan` skips symlinks. `--no-sandbox` inspects in the CLI process.
+
 ### Protecting the server from large files
 
 No input is read into Ruby memory: S3 objects and IO are streamed to a temp file, Rails uploads
@@ -442,7 +542,8 @@ CI runs the suite on Ruby 3.2 / 3.3 / 3.4 against rubyzip 2.3 and 3.x, and the s
 against real decoders (libvips, ImageMagick) and the ClamAV adapter against a real clamd
 (`CLAMD_HOST=localhost` with `docker run -p 3310:3310 clamav/clamav:stable`). Locally they are skipped without those tools; for
 `reencode` run `bundle config set --local with vips` (needs libvips). The Rails helper tests
-use `activemodel` / `activejob` from the Gemfile (development only).
+use `activemodel` / `activejob` from the Gemfile (development only). The integration tests
+(Shrine, CarrierWave, Active Storage, Rack) need `bundle config set --local with integration`.
 
 `test/sample_virus_malware.rb` is the hostile-sample corpus: every attack shape with its expected
 verdict, plus known gaps (skipped until fixed). `bundle exec rake samples[DIR]` writes the inert
