@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.11.1
+
+- Update the description, and the github page for version 0.10.0 and 0.11.0
+
 ## 0.11.0
 
 - `upload_inspector` command: `check FILE...`, `scan DIR [--recursive]` to re-check stored
