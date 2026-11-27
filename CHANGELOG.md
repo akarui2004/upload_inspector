@@ -8,8 +8,8 @@
 - `UploadInspector::ActiveStorageAnalyzer`: records the verdict in `blob.metadata[:upload_inspector]`
   for every blob, direct uploads included, keeping the metadata of the analyzer it stands in front of.
   Subclass and override `on_unsafe(result)` to notify, flag or purge. Decide with
-  `ActiveStorageAnalyzer.safe?(blob)`: direct uploads accept client metadata, so only an analyzed
-  blob's verdict counts.
+  `ActiveStorageAnalyzer.safe?(blob)`: direct uploads accept client metadata, so the verdict is
+  signed with `ActiveStorage.verifier` for that blob and only a signed one counts.
 - Shrine plugin `plugin :upload_inspector`: validation errors, `sanitize: true` stores a cleaned copy on promote.
 - `UploadInspector::CarrierWave`: integrity error on cache before processing,
   `process :upload_inspector_sanitize`.

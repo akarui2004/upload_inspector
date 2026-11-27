@@ -14,7 +14,8 @@ module UploadInspector
   #   UploadInspector::ActiveStorageAnalyzer.safe?(blob) # => false
   #
   # Read the verdict through safe?: direct uploads let the client send blob metadata, so an
-  # +upload_inspector+ key may be the client's own until the analyzer overwrites it.
+  # +upload_inspector+ key may be the client's own. The analyzer signs its verdict with
+  # ActiveStorage.verifier (the app's secret) bound to the blob key; safe? trusts only that.
   #
   # Active Storage runs one analyzer per blob, so this one accepts every blob and merges in the
   # metadata of the analyzer that would have run otherwise (image dimensions, video duration).
@@ -28,6 +29,8 @@ module UploadInspector
   #     end
   #   end
   class ActiveStorageAnalyzer < ActiveStorage::Analyzer
+    SIGNATURE_PURPOSE = :upload_inspector_verdict
+
     class << self
       # UploadInspector.check keywords (Policy options, sandbox:, scanner:, ...); subclasses
       # use their parent's unless given their own.
@@ -36,15 +39,20 @@ module UploadInspector
       def options = @options || (equal?(ActiveStorageAnalyzer) ? {} : superclass.options)
       def accept?(_blob) = true
 
-      # True only when the blob was analyzed (a flag clients cannot set) and found safe. False
-      # while analysis is pending, when it failed, or when there is no verdict. Blobs analyzed
-      # before this analyzer was registered may still carry a client-sent verdict: re-analyze them.
+      # True only for a verdict this analyzer signed for this blob, saying safe. False while
+      # analysis is pending, when it failed, for a missing, unsigned or copied verdict.
       def safe?(blob)
-        return false unless blob.analyzed?
-
         verdict = blob.metadata[:upload_inspector] || blob.metadata['upload_inspector']
-        verdict.is_a?(Hash) && (verdict[:safe] || verdict['safe']) == true
+        return false unless verdict.is_a?(Hash)
+
+        signature = verdict[:signature] || verdict['signature']
+        return false unless signature.is_a?(String)
+
+        ActiveStorage.verifier.verified(signature, purpose: SIGNATURE_PURPOSE) == [blob.key, true]
       end
+
+      # @api private
+      def sign(blob, safe) = ActiveStorage.verifier.generate([blob.key, safe], purpose: SIGNATURE_PURPOSE)
     end
 
     def metadata
@@ -52,7 +60,8 @@ module UploadInspector
         UploadInspector.check(file, filename: blob.filename.to_s, **self.class.options)
       end
       verdict = { safe: result.safe?, reason: result.reason&.to_s, detail: result.detail,
-                  detected_type: result.detected_type, would_reject: result.would_reject&.to_s, }.compact
+                  detected_type: result.detected_type, would_reject: result.would_reject&.to_s,
+                  signature: self.class.sign(blob, result.safe?), }.compact
       on_unsafe(result) unless result.safe?
       next_analyzer_metadata.merge(upload_inspector: verdict)
     end

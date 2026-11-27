@@ -417,10 +417,9 @@ UploadInspector::ActiveStorageAnalyzer.safe?(blob) # => false
 ```
 
 Decide with `safe?`, not the raw metadata: direct uploads let the client send blob metadata, so
-an `upload_inspector` key may be the client's own until the analyzer overwrites it. `safe?` is
-true only once the blob is analyzed (a flag Rails does not accept from clients) with a safe
-verdict; pending, failed or missing means unsafe. Blobs analyzed before you registered the
-analyzer may still carry a client-sent verdict: re-analyze them (`blob.analyze`).
+an `upload_inspector` key may be the client's own. The analyzer signs its verdict with
+`ActiveStorage.verifier` (your app's secret), bound to the blob key; `safe?` is true only for
+that signed verdict saying safe. Pending, failed, missing, unsigned or copied means unsafe.
 
 ```ruby
 class FlagUnsafeUploads < UploadInspector::ActiveStorageAnalyzer
