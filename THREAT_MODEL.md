@@ -31,7 +31,8 @@ later opened by a person, a browser or a server process where it does harm.
 
 - **Malware signatures and exploits in valid content**: a crafted font, image codec or media
   stream exploiting a reader bug, or a malicious executable inside an allowed type that the
-  structure check cannot see. Pair the gem with an antivirus or malware scanner.
+  structure check cannot see. Pass a malware scanner (`scanner:`, ClamAV built in) or use
+  GuardDuty Malware Protection for S3 (`check_s3(require_guardduty_tag: true)`).
 - **Data hidden inside an allowed structure** (steganography, a zip inside an MP4 `free` box,
   pixel data). It is inert unless another flaw extracts it. `UploadInspector.sanitize` removes it
   from metadata, comments and unknown chunks or boxes; `reencode: true` also from pixel data.

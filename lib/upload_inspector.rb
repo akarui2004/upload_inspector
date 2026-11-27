@@ -32,6 +32,7 @@ require_relative 'upload_inspector/sanitizer'
 require_relative 'upload_inspector/sandbox'
 require_relative 'upload_inspector/source'
 require_relative 'upload_inspector/s3'
+require_relative 'upload_inspector/scanners'
 
 # Fail-closed structural inspection of untrusted uploaded files.
 # Only content proven to match a known-safe structure is accepted; anything
@@ -58,22 +59,35 @@ module UploadInspector
   # +sandbox+ runs the inspection in a resource-limited child process (default true).
   # +mode+ :report runs every check but always accepts, setting Result#would_reject instead
   # (shadow mode, to measure rejections before enforcing). Other keywords are Policy options.
+  # +scanner+ (see Scanners, e.g. Scanners::ClamAV.new) scans files the structural check
+  # accepted: :malware_detected when it finds something, :scanner_failed when it cannot scan
+  # unless +scanner_fail_open+ is true, which then keeps the file accepted.
   #
   # With ActiveSupport loaded, each call publishes "check.upload_inspector" with payload
-  # { mode:, reason:, would_reject:, detected_type:, filename_ext:, size: }.
-  def self.check(source, filename: nil, sandbox: true, mode: :enforce, **policy_options)
+  # { mode:, reason:, would_reject:, detected_type:, filename_ext:, size: }, and each scan
+  # "scan.upload_inspector" with { scanner:, reason:, detail: }.
+  def self.check(source, filename: nil, sandbox: true, mode: :enforce, scanner: nil, scanner_fail_open: false,
+                 **policy_options)
     policy = Policy.new(**policy_options)
-    observe(mode) { |payload| inspect_source(source, filename:, sandbox:, policy:, payload:) }
+    observe(mode) do |payload|
+      inspect_source(source, filename:, sandbox:, policy:, payload:, scanner:, scanner_fail_open:)
+    end
   end
 
   # Downloads and inspects an S3 object, e.g. one uploaded through a presigned URL.
   # +client+ is an Aws::S3::Client; +filename+ defaults to the key's basename.
+  # +require_guardduty_tag+ also requires GuardDuty Malware Protection's verdict tag on the
+  # object (see S3.check). Other keywords are the same as for check.
   #
   #   result = UploadInspector.check_s3(client: s3, bucket: 'uploads', key: 'tmp/abc/report.pdf')
   #   s3.delete_object(bucket: 'uploads', key: 'tmp/abc/report.pdf') unless result.safe?
-  def self.check_s3(client:, bucket:, key:, filename: nil, version_id: nil, sandbox: true, mode: :enforce, **policy_options)
+  def self.check_s3(client:, bucket:, key:, filename: nil, version_id: nil, sandbox: true, mode: :enforce,
+                    scanner: nil, scanner_fail_open: false, require_guardduty_tag: false, **policy_options)
     policy = Policy.new(**policy_options)
-    observe(mode) { |payload| S3.check(client:, bucket:, key:, filename:, version_id:, sandbox:, policy:, payload:) }
+    observe(mode) do |payload|
+      S3.check(client:, bucket:, key:, filename:, version_id:, sandbox:, policy:, payload:, scanner:,
+               scanner_fail_open:, require_guardduty_tag:)
+    end
   end
 
   # Checks an upload, then writes a cleaned copy to +to+ holding only the parts known to be safe
@@ -89,13 +103,14 @@ module UploadInspector
   # and writes them with a leading ' so spreadsheets show them as text. +reencode+ decodes raster
   # images (PNG, JPEG, GIF, WebP, HEIC, AVIF) with libvips and encodes new ones, which also drops
   # anything hidden in pixel data; it needs the ruby-vips gem and raises ArgumentError without it.
+  # +scanner+ / +scanner_fail_open+ scan the cleaned copy (what gets stored) as for check.
   # Other keywords are the same as for check, without +mode+.
   # Types that cannot be cleaned are rejected with :sanitize_unsupported.
   #
   # With ActiveSupport loaded, each call publishes "sanitize.upload_inspector" with payload
   # { reason:, detected_type:, filename_ext:, size: }.
   def self.sanitize(source, to:, filename: nil, sandbox: true, keep_orientation: false, neutralize_csv_formulas: false,
-                    reencode: false, **policy_options)
+                    reencode: false, scanner: nil, scanner_fail_open: false, **policy_options)
     policy = Policy.new(**policy_options)
     Sanitizers::VipsReencoder.require_vips! if reencode # fail now, not as a rejection
     options = { keep_orientation:, neutralize_csv_formulas:, reencode: }
@@ -103,7 +118,8 @@ module UploadInspector
     instrument('sanitize.upload_inspector', payload) do
       result = Dir.mktmpdir('upload_inspector') do |workdir|
         output = File.join(workdir, 'sanitized')
-        checked = inspect_source(source, filename:, sandbox:, policy:, payload:, sanitize: { output:, **options })
+        checked = inspect_source(source, filename:, sandbox:, policy:, payload:, sanitize: { output:, **options },
+                                         scanner:, scanner_fail_open:)
         next checked unless checked.safe?
 
         FileUtils.mv(output, to)
@@ -140,8 +156,10 @@ module UploadInspector
 
   # Inspection without mode handling or instrumentation (see check). Fills +payload+.
   # @api private
-  # With +sanitize+ (Sanitizer options, output: included) the file is also rewritten.
-  def self.inspect_source(source, filename:, sandbox:, policy:, payload: {}, sanitize: nil)
+  # With +sanitize+ (Sanitizer options, output: included) the file is also rewritten; with
+  # +scanner+ an accepted file is also scanned for malware.
+  def self.inspect_source(source, filename:, sandbox:, policy:, payload: {}, sanitize: nil, scanner: nil,
+                          scanner_fail_open: false)
     # Active Storage knows the size up front: reject before downloading the blob to disk.
     size = source.respond_to?(:byte_size) ? source.byte_size.to_i : 0
     return Result.reject(:too_large, "#{size} bytes") if size > policy.max_file_size
@@ -152,9 +170,29 @@ module UploadInspector
       # which cannot carry a name that is not valid UTF-8.
       unsafe_name = Filename.unsafe_reason(name)
       next Result.reject(:filename_unsafe, unsafe_name) if unsafe_name
-      next Sandbox.run(path, filename: name, policy:, sanitize:) if sandbox
+      result = if sandbox
+                 Sandbox.run(path, filename: name, policy:, sanitize:)
+               else
+                 inspect_path(path, filename: name, policy:, sanitize:)
+               end
+      next result unless scanner && result.safe? # only files that passed are worth scanning
 
-      inspect_path(path, filename: name, policy:, sanitize:)
+      # sanitize: scan the cleaned copy, the file that will be stored and served.
+      scan(scanner, sanitize ? sanitize[:output] : path, result, fail_open: scanner_fail_open)
+    end
+  end
+
+  # Scans an accepted file; returns +result+ or a rejection. Outside the sandbox: scanners
+  # need sockets or processes, and bound their own time.
+  # @api private
+  def self.scan(scanner, path, result, fail_open:)
+    payload = { scanner: scanner.class.name }
+    instrument('scan.upload_inspector', payload) do
+      reason, detail = Scanners.verdict(scanner, path)
+      payload.merge!(reason:, detail:)
+      next result if reason.nil? || (reason == :scanner_failed && fail_open)
+
+      Result.reject(reason, detail, detected_type: result.detected_type, links: result.links)
     end
   end
 

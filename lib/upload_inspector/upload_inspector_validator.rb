@@ -8,13 +8,13 @@ require 'active_model'
 #
 # Works for Active Storage attachments (has_one_attached / has_many_attached) and plain
 # attributes holding an uploaded file or IO. Options are UploadInspector.check keywords
-# (Policy options, sandbox:, mode: :report to log via instrumentation instead of blocking). The error type is the rejection reason (errors.details shows
+# (Policy options, sandbox:, scanner:, mode: :report to log via instrumentation instead of blocking). The error type is the rejection reason (errors.details shows
 # e.g. { error: :pdf_active_content }) with the message from UploadInspector::Messages.
 #
 # The check runs inside the request: keep it to small files. Blobs uploaded directly to
 # storage (signed ids, direct uploads) are not here yet; check those with InspectJob.
 class UploadInspectorValidator < ActiveModel::EachValidator
-  CHECK_OPTIONS = [*UploadInspector::Policy::DEFAULTS.keys, :sandbox, :mode].freeze
+  CHECK_OPTIONS = [*UploadInspector::Policy::DEFAULTS.keys, :sandbox, :mode, :scanner, :scanner_fail_open].freeze
 
   def validate_each(record, attribute, value)
     uploads(record, attribute, value).each do |source, filename|

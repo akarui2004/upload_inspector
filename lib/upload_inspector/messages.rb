@@ -31,11 +31,13 @@ module UploadInspector
       office_encrypted: 'is password-protected',
       pdf_link: 'contains links',
       sanitize_unsupported: 'is a file type that cannot be cleaned',
+      malware_detected: 'contains malware',
       ole_too_large: 'is too large', rtf_too_large: 'is too large',
       image_malformed: DAMAGED, media_malformed: DAMAGED, pdf_unparsable: DAMAGED,
       zip_unparsable: DAMAGED, zip_empty: DAMAGED, svg_unparsable: DAMAGED, ooxml_malformed_xml: DAMAGED,
       ole_malformed: DAMAGED, rtf_malformed: DAMAGED, odf_malformed: DAMAGED,
       timeout: NOT_CHECKED, resource_limit: NOT_CHECKED, inspection_failed: NOT_CHECKED, sandbox_failed: NOT_CHECKED,
+      scanner_failed: NOT_CHECKED,
     }.freeze
 
     module_function
