@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.11.0
+
+- `upload_inspector` command: `check FILE...`, `scan DIR [--recursive]` to re-check stored
+  uploads, `sanitize FILE --out PATH`; `--types` (MIME types or presets), `--json` (JSON lines),
+  `--no-sandbox`, `--clamav SOCKET|HOST:PORT`. Exit 0 safe, 1 unsafe, 2 error.
+- `UploadInspector::ActiveStorageAnalyzer`: records the verdict in `blob.metadata[:upload_inspector]`
+  for every blob, direct uploads included, keeping the metadata of the analyzer it stands in front of.
+  Subclass and override `on_unsafe(result)` to notify, flag or purge. Decide with
+  `ActiveStorageAnalyzer.safe?(blob)`: direct uploads accept client metadata, so the verdict is
+  signed with `ActiveStorage.verifier` for that blob and only a signed one counts.
+- Shrine plugin `plugin :upload_inspector`: validation errors, `sanitize: true` stores a cleaned copy on promote.
+- `UploadInspector::CarrierWave`: integrity error on cache before processing,
+  `process :upload_inspector_sanitize`.
+- `UploadInspector::Rack` middleware: 422 JSON for unsafe files on the given `paths` (matched raw and
+  normalized like a router), for every body Rack parses.
+- None of these libraries is a dependency; each integration loads on first use.
+
 ## 0.10.0
 
 - `scanner:` option for `check`, `check_s3`, `sanitize`, the validator and `InspectJob` (override

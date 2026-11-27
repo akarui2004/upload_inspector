@@ -13,6 +13,14 @@ module UploadInspector
   class Sanitizer
     include Rejectable
 
+    # Whether sanitize can clean this type at all. A file of such a type can still be rejected
+    # as :sanitize_unsupported when its layout cannot be rewritten (e.g. HEIC metadata stored
+    # in another item): integrations keep the original only for types this returns false for.
+    def self.supported?(type)
+      ImageInspector::FORMATS.key?(type) || IsoBmffInspector::TYPES.include?(type) ||
+        type == SvgInspector::TYPE || TextInspector::TYPES.include?(type)
+    end
+
     def initialize(policy, output:, keep_orientation: false, neutralize_csv_formulas: false, reencode: false)
       @policy = policy
       @output = output

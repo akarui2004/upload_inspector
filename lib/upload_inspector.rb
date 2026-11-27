@@ -38,8 +38,12 @@ require_relative 'upload_inspector/scanners'
 # Only content proven to match a known-safe structure is accepted; anything
 # unknown, unparsable, or erroring is rejected.
 module UploadInspector
-  # Rails helpers, loaded on first use so the gem does not depend on Rails.
+  # Rails helpers and integrations, loaded on first use so the gem depends on none of them.
   autoload :InspectJob, File.expand_path('upload_inspector/inspect_job', __dir__)
+  autoload :ActiveStorageAnalyzer, File.expand_path('upload_inspector/integrations/active_storage_analyzer', __dir__)
+  autoload :CarrierWave, File.expand_path('upload_inspector/integrations/carrierwave', __dir__)
+  autoload :Rack, File.expand_path('upload_inspector/integrations/rack', __dir__)
+  autoload :CLI, File.expand_path('upload_inspector/cli', __dir__)
 
   MODES = %i[enforce report].freeze
   # Raster images and media render inline without running anything; everything else downloads.

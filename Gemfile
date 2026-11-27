@@ -18,3 +18,12 @@ gem 'activemodel', '>= 7.1'
 group :vips, optional: true do
   gem 'ruby-vips', '~> 2.2'
 end
+
+# Tests for the optional integrations (Shrine, CarrierWave, Active Storage analyzer, Rack).
+# Enable with `bundle config set --local with integration`; never a runtime dependency.
+group :integration, optional: true do
+  gem 'activestorage', '>= 7.1'
+  gem 'carrierwave', '>= 3.0'
+  gem 'rack', '>= 2.2'
+  gem 'shrine', '~> 3.5'
+end
