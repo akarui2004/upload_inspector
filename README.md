@@ -9,19 +9,25 @@ A file is accepted only when its structure is proven to match a known-safe shape
 unparsable, encrypted, oversized, or erroring is rejected. Pure Ruby (`marcel`, `rubyzip`), no AV engine,
 no native parsers, nothing is rendered or executed (libvips only for the optional re-encode).
 
-> **New in 0.9: `UploadInspector.sanitize`.** Writes a clean copy that keeps only the parts known
-> to be safe: EXIF with GPS location, XMP, comments, unknown chunks and payloads hidden in them
-> (a `<?php` web shell in a JPEG comment, a zip in an MP4 box) are removed from PNG, JPEG, GIF,
-> WebP, HEIC, AVIF, MP4 and QuickTime; SVG is rebuilt from an allowlist; CSV formulas can be
-> neutralized; `reencode: true` re-encodes images through libvips. The copy is checked again
-> before it is written.
+> **New in 0.11: CLI & Framework Integrations.**
+> - `upload_inspector` CLI tool: `check FILE...`, `scan DIR [--recursive]`, and `sanitize FILE --out PATH` with `--types`, `--json` (JSON lines), `--clamav`, and `--no-sandbox`.
+> - Plug-and-play integrations (zero extra dependencies): **Active Storage** signed analyzer (`UploadInspector::ActiveStorageAnalyzer`), **Shrine** plugin (`plugin :upload_inspector`), **CarrierWave** mixin (`include UploadInspector::CarrierWave`), and **Rack** middleware (`UploadInspector::Rack`).
+>
+> **New in 0.10: Malware Scanning Adapters.**
+> Files passing structural checks can be scanned for malware in the same call (`scanner:` option):
+> - `UploadInspector::Scanners::ClamAV`: clamd `INSTREAM` over Unix socket or TCP via stdlib sockets (no extra gem).
+> - `UploadInspector::Scanners::Command`: any scanner binary judged by exit code.
+> - `UploadInspector.check_s3(require_guardduty_tag: true)`: AWS GuardDuty Malware Protection for S3 integration.
+>
+> **Content Disarm & Reconstruction (CDR):**
+> `UploadInspector.sanitize` writes a clean copy keeping only parts known to be safe: strips EXIF with GPS, XMP, comments, unknown chunks/boxes from PNG, JPEG, GIF, WebP, HEIC, AVIF, MP4, QuickTime; rebuilds SVG from an allowlist; neutralizes CSV formulas; optional `reencode: true` with libvips.
 >
 > ```ruby
 > result = UploadInspector.sanitize(params[:file], to: clean_path, allowed_types: UploadInspector::Presets::IMAGES)
 > store(result.sanitized_path) if result.safe?
 > ```
 >
-> See [Sanitizing uploads (CDR)](#sanitizing-uploads-cdr).
+> See [Active Storage, Shrine, CarrierWave, Rack](#active-storage-analyzer-shrine-carrierwave-rack), [Command line](#command-line), [Malware scanning](#malware-scanning), and [Sanitizing uploads (CDR)](#sanitizing-uploads-cdr).
 
 > **Not an antivirus.** It blocks structural attack vectors: disguised executables, macros, PDF
 > JavaScript, OLE objects, remote templates, DDE, zip bombs, image polyglots, scripted SVG and

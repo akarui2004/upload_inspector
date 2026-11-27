@@ -8,26 +8,21 @@ Gem::Specification.new do |spec|
   spec.authors = ['Minh Doan']
   spec.email = ['minhdpc@gmail.com']
 
-  spec.summary = 'Sanitize (CDR) and fail-closed checks for untrusted uploads: clean copies of images, video, SVG and CSV; ' \
-                 'PDF, Office, zip and text verified.'
+  spec.summary = 'Sanitize (CDR), malware scanning, CLI, and fail-closed checks for untrusted uploads: clean copies of ' \
+                 'images, video, SVG, CSV; PDF, Office, zip verified; Active Storage, Shrine, CarrierWave, Rack.'
   spec.description = <<~DESC.tr("\n", " ").strip
-    NEW in 0.9: UploadInspector.sanitize, content disarm and reconstruction (CDR). It writes a
-    clean copy of an upload keeping only the parts known to be safe: EXIF with GPS location, XMP,
-    comments, unknown chunks and payloads hidden in them (a PHP web shell in a JPEG comment, a
-    zip in an MP4 box) are removed from PNG, JPEG, GIF, WebP, HEIC, AVIF, MP4 and QuickTime;
-    SVG is rebuilt from an allowlist; CSV formulas can be neutralized; optional full re-encode
-    through ruby-vips. The copy is checked again before it is written.
-    Fail-closed checks for untrusted uploads: the real file type must be allowlisted and match
-    the extension, and PDF, Office (OOXML, 97-2003, RTF, OpenDocument), zip, SVG, PNG, JPEG, GIF, WebP, HEIC, AVIF, MP4 and
-    QuickTime files are verified structurally (scripts, macros, external links, appended data,
-    zip and pixel bombs are rejected), as are CSV/TXT files (UTF-8 only, no binary, no HTML or
-    script tags, no CSV injection). File names with hidden extensions (shell.php.jpg) or bidi
-    tricks are rejected. Works with file paths, Rails uploads, Active Storage, any IO and S3
-    objects uploaded through presigned URLs, and ships a Rails validator, a background job,
-    type presets, a report-only shadow mode, ActiveSupport instrumentation and helpers to serve
-    files safely (safe file names and response headers).
-    Inspection runs in a resource-limited child process.
-    Pure Ruby (libvips only for the optional re-encode), not an antivirus. If this gem helps you, a star on GitHub is much appreciated!
+    Fail-closed structural inspection and content disarm and reconstruction (CDR) for untrusted uploads.
+    UploadInspector.sanitize writes a clean copy keeping only parts known to be safe (strips EXIF/GPS,
+    XMP, comments, unknown chunks/boxes from PNG, JPEG, GIF, WebP, HEIC, AVIF, MP4, QuickTime; rebuilds
+    SVG from an allowlist; neutralizes CSV formulas; optional ruby-vips re-encode).
+    Structural checks reject macros, PDF JavaScript/actions, OLE objects, remote templates, DDE, zip bombs,
+    image polyglots, and dangerous filenames (hidden extensions, bidi tricks).
+    Malware scanning (0.10): pluggable scanner adapters including ClamAV (clamd INSTREAM via pure-Ruby socket),
+    custom command binaries, and AWS GuardDuty Malware Protection for S3 tags.
+    Integrations & CLI (0.11): upload_inspector CLI (check, scan directory, sanitize), signed Active Storage
+    analyzer, Shrine plugin, CarrierWave mixin, and Rack middleware. Works with Rails uploads, S3 presigned URLs,
+    and plain IO in a resource-limited child process.
+    Pure Ruby (libvips only for optional re-encode).
     Usage and options: https://akarui2004.github.io/upload_inspector
   DESC
   spec.license = 'MIT'
