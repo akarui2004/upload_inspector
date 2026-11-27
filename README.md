@@ -26,8 +26,8 @@ no native parsers, nothing is rendered or executed (libvips only for the optiona
 > **Not an antivirus.** It blocks structural attack vectors: disguised executables, macros, PDF
 > JavaScript, OLE objects, remote templates, DDE, zip bombs, image polyglots, scripted SVG and
 > CSV injection. It does not detect malware signatures or exploits hidden inside otherwise valid
-> content. Pair it with an AV scanner (e.g. Amazon GuardDuty Malware Protection for S3, endpoint
-> AV) when you need that.
+> content by itself: pass `scanner:` (ClamAV built in, no extra gem) or check Amazon GuardDuty
+> Malware Protection for S3's tag, see [Malware scanning](#malware-scanning).
 >
 > What it does and does not defend against: [THREAT_MODEL.md](THREAT_MODEL.md). Report
 > vulnerabilities privately: [SECURITY.md](SECURITY.md).
@@ -82,6 +82,7 @@ Requires Ruby >= 3.2.
 - [Sanitizing uploads (CDR)](#sanitizing-uploads-cdr)
 - [Error messages](#error-messages)
 - [S3 (presigned URL uploads)](#s3-presigned-url-uploads)
+- [Malware scanning](#malware-scanning)
 - [Protecting the server from large files](#protecting-the-server-from-large-files)
 - [Policy options](#policy-options)
 
@@ -328,6 +329,52 @@ deleting a file over an outage. Upload to a quarantine prefix nothing serves, an
 to its final key only once it is safe: a presigned URL can overwrite the object after the check
 until it expires (use `copy_object` with `copy_source_if_match` and the checked ETag).
 
+### Malware scanning
+
+Pass a `scanner:` to `check` / `check_s3` / `sanitize` (and the validator) to scan files the
+structural check accepted, in the same call. Rejected files are not scanned; `sanitize` scans the
+cleaned copy.
+
+```ruby
+clamav = UploadInspector::Scanners::ClamAV.new(host: "clamav", port: 3310, timeout: 30)
+# or the local Unix socket:            ClamAV.new(socket: "/var/run/clamav/clamd.ctl")
+# or any command judged by exit code:  Scanners::Command.new("clamdscan", "--no-summary", "--fdpass")
+
+result = UploadInspector.check(params[:file], allowed_types: ALLOWED_TYPES, scanner: clamav)
+result.reason # => :malware_detected, result.detail # => "Eicar-Test-Signature"
+
+validates :document, upload_inspector: { allowed_types: ALLOWED_TYPES, scanner: CLAMAV }
+```
+
+- `:malware_detected`: the scanner found something; `detail` is the signature name.
+- `:scanner_failed`: it could not scan (clamd down, timeout, file over `max_stream`). Fail-closed:
+  the file is rejected unless you pass `scanner_fail_open: true`.
+- The scan runs in your process after the sandboxed check (it needs a socket), bounded by the
+  adapter's `timeout`. Keep `max_stream` (default 25 MB) at or below clamd's `StreamMaxLength`:
+  larger files are `:scanner_failed` rather than half-scanned. Big files belong in a job.
+- `ClamAV` speaks clamd's `INSTREAM` protocol with the stdlib `socket`. `Command` runs a binary
+  without a shell, appending the file path: exit 0 clean, 1 infected, anything else an error.
+- Any object with `scan(path)` returning `:clean` or `[:infected, signature]` (raising when it
+  cannot scan) works as a scanner.
+- With ActiveSupport loaded, each scan publishes `scan.upload_inspector` with
+  `{ scanner:, reason:, detail: }`.
+
+`InspectJob` arguments must be serializable, so subclass it and override `scanner`. When the
+scanner fails, the job raises `UploadInspector::Scanners::Error` instead of purging the file:
+
+```ruby
+class InspectUploadJob < UploadInspector::InspectJob
+  retry_on UploadInspector::Scanners::Error, wait: :polynomially_longer, attempts: 10
+  def scanner = UploadInspector::Scanners::ClamAV.new(host: "clamav")
+end
+```
+
+For S3 buckets with [GuardDuty Malware Protection for S3](https://docs.aws.amazon.com/guardduty/latest/ug/gdu-malware-protection-s3.html),
+`check_s3(require_guardduty_tag: true)` reads its `GuardDutyMalwareScanStatus` object tag first
+(needs `s3:GetObjectTagging`): `THREATS_FOUND` is `:malware_detected` without downloading,
+`NO_THREATS_FOUND` goes on to the inspection, other statuses are `:scanner_failed`. While the tag
+is missing (scan not finished) it raises `UploadInspector::Scanners::Pending`, so the job retries.
+
 ### Protecting the server from large files
 
 No input is read into Ruby memory: S3 objects and IO are streamed to a temp file, Rails uploads
@@ -382,8 +429,9 @@ It is resource isolation, not a security boundary (same OS user).
 
 ## Development
 
-Tests build hostile-shaped samples in memory (no real malware, no AV test signatures).
-Run them in a container or CI rather than on a workstation with endpoint AV:
+Tests build hostile-shaped samples in memory (no real malware). The scanner tests write the
+EICAR antivirus test string to temp files. Run them in a container or CI rather than on a
+workstation with endpoint AV:
 
 ```sh
 docker run --rm -v "$PWD":/src:ro ruby:3.3 \
@@ -391,7 +439,8 @@ docker run --rm -v "$PWD":/src:ro ruby:3.3 \
 ```
 
 CI runs the suite on Ruby 3.2 / 3.3 / 3.4 against rubyzip 2.3 and 3.x, and the sanitize tests
-against real decoders (libvips, ImageMagick). Locally they are skipped without those tools; for
+against real decoders (libvips, ImageMagick) and the ClamAV adapter against a real clamd
+(`CLAMD_HOST=localhost` with `docker run -p 3310:3310 clamav/clamav:stable`). Locally they are skipped without those tools; for
 `reencode` run `bundle config set --local with vips` (needs libvips). The Rails helper tests
 use `activemodel` / `activejob` from the Gemfile (development only).
 

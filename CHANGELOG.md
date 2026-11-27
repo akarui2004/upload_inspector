@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.10.0
+
+- `scanner:` option for `check`, `check_s3`, `sanitize`, the validator and `InspectJob` (override
+  `#scanner`): files the structural check accepted are scanned for malware in the same call
+  (`sanitize` scans the cleaned copy).
+  - `:malware_detected` (detail: the signature) and `:scanner_failed` (scanner unreachable, timed
+    out or over its size limit). Fail-closed; `scanner_fail_open: true` accepts on scanner errors.
+  - `UploadInspector::Scanners::ClamAV`: clamd `INSTREAM` over a Unix or TCP socket, stdlib only,
+    with `timeout:` and `max_stream:`.
+  - `UploadInspector::Scanners::Command`: any scanner binary judged by exit code (0 clean,
+    1 infected), run without a shell, with `timeout:`.
+  - `InspectJob` raises `Scanners::Error` on `:scanner_failed` instead of purging, so it can retry.
+  - With ActiveSupport loaded, each scan publishes `scan.upload_inspector`.
+- `check_s3(require_guardduty_tag: true)`: reads GuardDuty Malware Protection for S3's
+  `GuardDutyMalwareScanStatus` tag; raises `Scanners::Pending` while it is missing.
+- Without `scanner:` / `require_guardduty_tag:` nothing changes.
+
 ## 0.9.1
 
 - Gem description: rubygems.org cut it off at a literal `<?php` read as an HTML tag; it now

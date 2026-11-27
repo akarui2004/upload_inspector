@@ -129,4 +129,46 @@ class RailsHelpersTest < Minitest::Test
   ensure
     ActiveSupport::Notifications.unsubscribe(subscriber)
   end
+
+  # Fails every scan, as when clamd is down.
+  class DownScanner
+    def scan(_path) = raise(UploadInspector::Scanners::Error, 'clamd down')
+  end
+
+  class ScanningJob < RecordingJob
+    def scanner = DownScanner.new
+  end
+
+  class ScannedDocument
+    include ActiveModel::Model
+    attr_accessor :file
+
+    validates :file, upload_inspector: { allowed_types: %w[application/pdf], sandbox: false, scanner: DownScanner.new }
+  end
+
+  def test_validator_passes_the_scanner
+    document = ScannedDocument.new(file: UploadedFile.new('a.pdf', write_file('RackMultipart4', clean_pdf)))
+    refute document.valid?
+    assert_equal [{ error: :scanner_failed }], document.errors.details[:file]
+  end
+
+  def test_job_retries_instead_of_purging_when_the_scanner_fails
+    good = FakeAttachment.new('a.pdf', write_file('good', clean_pdf))
+    record = Record.new(Many.new([good]), [])
+    assert_raises(UploadInspector::Scanners::Error) { ScanningJob.perform_now(record, 'documents', sandbox: false) }
+    refute good.purged
+    assert_empty record.rejected
+    ScanningJob.perform_now(record, 'documents', sandbox: false, scanner_fail_open: true)
+    refute good.purged
+  end
+
+  def test_scan_publishes_its_own_event
+    events = []
+    subscriber = ActiveSupport::Notifications.subscribe('scan.upload_inspector') { events << _1.payload }
+    UploadInspector.check(write_file('s.pdf', clean_pdf), filename: 's.pdf', sandbox: false, scanner: DownScanner.new)
+    assert_equal({ scanner: 'RailsHelpersTest::DownScanner', reason: :scanner_failed,
+                   detail: 'UploadInspector::Scanners::Error: clamd down', }, events.last)
+  ensure
+    ActiveSupport::Notifications.unsubscribe(subscriber)
+  end
 end
