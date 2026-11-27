@@ -29,13 +29,14 @@ module UploadInspector
     attr_reader :upload_inspector_result
 
     # Replaces the cached file with a cleaned copy. Types that cannot be cleaned (PDF, Office)
-    # passed the check on cache and are kept as they are.
+    # passed the check on cache and are kept as they are; a cleanable type that cannot be
+    # rewritten is a processing error rather than stored with its metadata.
     def upload_inspector_sanitize
       Dir.mktmpdir('upload_inspector') do |dir|
         output = File.join(dir, 'sanitized')
         result = UploadInspector.sanitize(current_path, to: output, filename: original_filename.to_s,
                                                         **upload_inspector_options.except(:mode))
-        next if result.reason == :sanitize_unsupported
+        next if result.reason == :sanitize_unsupported && !UploadInspector::Sanitizer.supported?(result.detected_type)
         raise ::CarrierWave::ProcessingError, result.message unless result.safe?
 
         FileUtils.mv(output, current_path)

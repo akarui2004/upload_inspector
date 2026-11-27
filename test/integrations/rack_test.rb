@@ -46,6 +46,15 @@ class RackIntegrationTest < Minitest::Test
     end
   end
 
+  def test_path_variants_a_router_accepts_are_checked
+    app = UploadInspector::Rack.new(APP, paths: ['/uploads'], allowed_types: %w[text/plain], sandbox: false)
+    ['/uploads', '//uploads', '/uploads/', '/%75ploads', '/uploads%2F'].each do |path|
+      env = Rack::MockRequest.env_for('/', method: 'POST', params: { 'doc' => upload('b.txt', clean_pdf) })
+      env['PATH_INFO'] = path
+      assert_equal 422, app.call(env).first, path
+    end
+  end
+
   def test_unsafe_file_in_a_nested_hash
     status, _, body = post('/uploads', 'doc' => { 'file' => upload('b.txt', clean_pdf) })
     assert_equal [422, 'doc[file]'], [status, JSON.parse(body)['field']]

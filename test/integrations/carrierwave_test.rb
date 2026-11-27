@@ -3,6 +3,7 @@
 require_relative 'integration_helper'
 CARRIERWAVE = IntegrationHelper.load('carrierwave')
 require 'sample_virus_malware'
+require 'minitest/mock'
 
 class CarrierWaveIntegrationTest < Minitest::Test
   include FixtureBuilder
@@ -39,5 +40,14 @@ class CarrierWaveIntegrationTest < Minitest::Test
     uploader = ImageUploader.new
     uploader.cache!(File.open(write_file('a.pdf', clean_pdf)))
     assert_equal clean_pdf, File.binread(uploader.current_path)
+  end
+
+  # A cleanable type whose layout cannot be rewritten must not be stored as uploaded.
+  def test_uncleanable_layout_of_a_cleanable_type_is_rejected
+    rejected = UploadInspector::Result.reject(:sanitize_unsupported, 'metadata item in another file or item',
+                                              detected_type: 'image/png')
+    UploadInspector.stub(:sanitize, rejected) do
+      assert_raises(CarrierWave::ProcessingError) { ImageUploader.new.cache!(File.open(write_file('a.png', S.png))) }
+    end
   end
 end

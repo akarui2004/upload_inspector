@@ -10,7 +10,8 @@ module UploadInspector
   #
   #   use UploadInspector::Rack, paths: [%r{\A/uploads}], allowed_types: UploadInspector::Presets::IMAGES
   #
-  # The check runs inside the request (in the sandbox unless sandbox: false): limit +paths+ to
+  # +paths+ are Strings (exact) or Regexps, matched against the request path both raw and
+  # normalized like a router does. The check runs inside the request (in the sandbox unless sandbox: false): limit +paths+ to
   # upload endpoints taking small files and check large ones in a background job.
   # Other keywords are UploadInspector.check keywords. The 422 body is
   # { "error": message, "reason": reason, "field": form field name }.
@@ -25,11 +26,10 @@ module UploadInspector
 
     def call(env)
       request = ::Rack::Request.new(env)
-      return @app.call(env) unless @paths.any? { |path| path === request.path_info }
+      return @app.call(env) unless checked_path?(request.path_info)
 
       # Not gated on form_data?: Rack also parses multipart/mixed and multipart/related bodies
       # (parseable_data?) into the same params. POST is {} for bodies Rack does not parse.
-
       uploads(request.POST).each do |field, upload|
         result = UploadInspector.check(upload[:tempfile], filename: upload[:filename].to_s, **@check_options)
         return reject(field, result) unless result.safe?
@@ -38,6 +38,17 @@ module UploadInspector
     end
 
     private
+
+    # Matches the raw path and the path as routers see it (percent-decoded, repeated and
+    # trailing slashes removed), so //uploads or /%75ploads/ cannot route past the check.
+    def checked_path?(raw)
+      decoded = ::Rack::Utils.unescape_path(raw.to_s)
+      normalized = decoded.squeeze('/')
+      normalized = normalized.chomp('/') unless normalized == '/'
+      [raw, decoded, normalized].uniq.any? { |candidate| @paths.any? { |path| path === candidate } }
+    rescue ArgumentError # invalid percent-encoding: check rather than guess
+      true
+    end
 
     # [field name, upload hash] for every file in the (nested) params.
     def uploads(params, prefix = nil)

@@ -14,7 +14,8 @@ class Shrine
     #   end
     #
     # Other options are UploadInspector.check keywords. Types that cannot be cleaned (PDF, Office)
-    # are promoted as they are; they passed the check when attached.
+    # are promoted as they are; they passed the check when attached. A cleanable type that
+    # cannot be rewritten raises Rejected rather than storing the original with its metadata.
     module UploadInspector
       # Raised by promote when the cleaned copy is rejected.
       class Rejected < Shrine::Error; end
@@ -40,7 +41,8 @@ class Shrine
               output = File.join(dir, 'sanitized')
               result = ::UploadInspector.sanitize(tempfile, to: output, filename: upload_inspector_filename,
                                                             **options[:check].except(:mode))
-              return super if result.reason == :sanitize_unsupported
+              uncleanable = !::UploadInspector::Sanitizer.supported?(result.detected_type)
+              return super if result.reason == :sanitize_unsupported && uncleanable
               raise Rejected, "#{result.reason}: #{result.message}" unless result.safe?
 
               File.open(output, 'rb') do |io|

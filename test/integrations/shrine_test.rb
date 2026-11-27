@@ -3,6 +3,7 @@
 require_relative 'integration_helper'
 SHRINE = IntegrationHelper.load('shrine', 'shrine/storage/memory')
 require 'sample_virus_malware'
+require 'minitest/mock'
 
 class ShrineIntegrationTest < Minitest::Test
   include FixtureBuilder
@@ -43,5 +44,16 @@ class ShrineIntegrationTest < Minitest::Test
     attacher = attach('a.pdf', clean_pdf)
     attacher.promote
     assert_equal clean_pdf, attacher.file.read # cannot be cleaned: stored as checked
+  end
+
+  # A cleanable type whose layout cannot be rewritten must not be stored as uploaded.
+  def test_uncleanable_layout_of_a_cleanable_type_is_rejected
+    rejected = UploadInspector::Result.reject(:sanitize_unsupported, 'metadata item in another file or item',
+                                              detected_type: 'image/png')
+    UploadInspector.stub(:sanitize, rejected) do
+      attacher = attach('a.png', S.png)
+      assert_raises(Shrine::Plugins::UploadInspector::Rejected) { attacher.promote }
+      refute attacher.stored?
+    end
   end
 end

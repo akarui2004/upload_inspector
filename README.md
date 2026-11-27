@@ -413,7 +413,14 @@ UploadInspector::ActiveStorageAnalyzer.options = { allowed_types: ALLOWED_TYPES 
 Rails.application.config.active_storage.analyzers.prepend UploadInspector::ActiveStorageAnalyzer
 
 blob.metadata[:upload_inspector] # => { "safe" => false, "reason" => "pdf_active_content", "detected_type" => "application/pdf" }
+UploadInspector::ActiveStorageAnalyzer.safe?(blob) # => false
 ```
+
+Decide with `safe?`, not the raw metadata: direct uploads let the client send blob metadata, so
+an `upload_inspector` key may be the client's own until the analyzer overwrites it. `safe?` is
+true only once the blob is analyzed (a flag Rails does not accept from clients) with a safe
+verdict; pending, failed or missing means unsafe. Blobs analyzed before you registered the
+analyzer may still carry a client-sent verdict: re-analyze them (`blob.analyze`).
 
 ```ruby
 class FlagUnsafeUploads < UploadInspector::ActiveStorageAnalyzer
@@ -456,6 +463,10 @@ check large ones in a job.
 ```ruby
 use UploadInspector::Rack, paths: [%r{\A/uploads}], allowed_types: ALLOWED_TYPES
 ```
+
+`paths` are Strings (exact) or Regexps, matched against the path both as sent and as a router
+reads it (percent-decoded, repeated and trailing slashes removed), so `//uploads` or
+`/%75ploads/` do not slip past.
 
 **Sinatra / Hanami / Roda** need no adapter: call `check` on the uploaded tempfile.
 

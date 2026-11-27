@@ -58,4 +58,15 @@ class ActiveStorageAnalyzerTest < Minitest::Test
     end
     assert_equal [['b.txt', :type_not_allowed]], RecordingAnalyzer.unsafe
   end
+
+  Stored = Struct.new(:analyzed?, :metadata)
+
+  def test_safe_needs_an_analyzed_blob_with_a_safe_verdict
+    analyzer = UploadInspector::ActiveStorageAnalyzer
+    assert analyzer.safe?(Stored.new(true, { 'upload_inspector' => { 'safe' => true } }))
+    assert analyzer.safe?(Stored.new(true, { upload_inspector: { safe: true } }))
+    refute analyzer.safe?(Stored.new(false, { 'upload_inspector' => { 'safe' => true } })) # client-sent, pending
+    refute analyzer.safe?(Stored.new(true, { 'upload_inspector' => { 'safe' => 'true' } }))
+    refute analyzer.safe?(Stored.new(true, {}))
+  end
 end
