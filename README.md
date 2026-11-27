@@ -362,7 +362,10 @@ validates :document, upload_inspector: { allowed_types: ALLOWED_TYPES, scanner: 
   `{ scanner:, reason:, detail: }`.
 
 `InspectJob` arguments must be serializable, so subclass it and override `scanner`. When the
-scanner fails, the job raises `UploadInspector::Scanners::Error` instead of purging the file:
+scanner fails, the job still handles the other attachments, keeps that one and then raises
+`UploadInspector::Scanners::Error` instead of purging it. Keep `max_file_size` at or below the
+scanner's `max_stream`: a larger file is then rejected (and purged) as `:too_large` rather than
+retried until the job gives up.
 
 ```ruby
 class InspectUploadJob < UploadInspector::InspectJob
