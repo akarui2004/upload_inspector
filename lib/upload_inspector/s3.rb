@@ -29,6 +29,8 @@ module UploadInspector
               scanner_fail_open: false, require_guardduty_tag: false)
       object = { bucket:, key:, version_id: }.compact
       head = client.head_object(**object)
+      # Versioned bucket: tags and bytes are read from the version that was checked.
+      object[:version_id] ||= head.version_id if head.respond_to?(:version_id) && head.version_id
       size = head.content_length.to_i
       return Result.reject(:too_large, "#{size} bytes") if size > policy.max_file_size
 

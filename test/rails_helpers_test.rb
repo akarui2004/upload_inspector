@@ -154,10 +154,14 @@ class RailsHelpersTest < Minitest::Test
 
   def test_job_retries_instead_of_purging_when_the_scanner_fails
     good = FakeAttachment.new('a.pdf', write_file('good', clean_pdf))
-    record = Record.new(Many.new([good]), [])
-    assert_raises(UploadInspector::Scanners::Error) { ScanningJob.perform_now(record, 'documents', sandbox: false) }
+    bad = FakeAttachment.new('b.pdf', write_file('bad', 'not a pdf'))
+    record = Record.new(Many.new([good, bad]), [])
+    error = assert_raises(UploadInspector::Scanners::Error) { ScanningJob.perform_now(record, 'documents', sandbox: false) }
+    assert_equal 'UploadInspector::Scanners::Error: clamd down', error.message
     refute good.purged
-    assert_empty record.rejected
+    assert bad.purged # handled although the scan before it failed
+    assert_equal [['documents', 'b.pdf', :unverifiable_type]], record.rejected
+    record.rejected.clear
     ScanningJob.perform_now(record, 'documents', sandbox: false, scanner_fail_open: true)
     refute good.purged
   end
